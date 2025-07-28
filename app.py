@@ -130,16 +130,15 @@ with tab1:
                         # Use compute budget
                         if inference_tokens > 0:
                             # Handle data-constrained case for inference
-                            if "U" in law_wrapper.extra_args and total_tokens > 0:
+                            if "U" in law_wrapper.extra_args:
+                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = total_tokens if total_tokens > 0 else 1e15  # Very large U for unlimited case
                                 result = scaling_law.compute_optimal_allocation_inference(
                                     compute_budget=compute_budget,
                                     D_inference=inference_tokens,
                                     mfu=mfu_inference,
-                                    U=total_tokens,
+                                    U=U_value,
                                 )
-                            elif "U" in law_wrapper.extra_args:
-                                # Skip data-constrained law if no unique tokens provided
-                                continue
                             else:
                                 result = scaling_law.compute_optimal_allocation_inference(
                                     compute_budget=compute_budget,
@@ -148,14 +147,12 @@ with tab1:
                                 )
                         else:
                             # Handle data-constrained case for basic allocation
-                            if "U" in law_wrapper.extra_args and total_tokens > 0:
+                            if "U" in law_wrapper.extra_args:
+                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = total_tokens if total_tokens > 0 else 1e15  # Very large U for unlimited case
                                 result = scaling_law.compute_optimal_allocation(
-                                    C=compute_budget, U=total_tokens
+                                    C=compute_budget, U=U_value
                                 )
-                            elif "U" in law_wrapper.extra_args:
-                                # Skip data-constrained law if no unique tokens provided
-                                st.info(f"Skipping {law_name}: requires 'Total Training Tokens' to be specified")
-                                continue
                             else:
                                 result = scaling_law.compute_optimal_allocation(
                                     C=compute_budget
@@ -198,18 +195,16 @@ with tab1:
                     law_wrapper = ALL_SCALING_LAWS[law_name]
                     scaling_law = law_wrapper.scaling_law
 
-                    # Skip data-constrained laws if no unique tokens provided
-                    if "U" in law_wrapper.extra_args and total_tokens == 0:
-                        continue
-
                     # Plot optimal scaling curve: optimal (N*, D*) for different compute budgets
                     N_optimal = []
                     D_optimal = []
                     
                     for C in compute_range:
                         try:
-                            if "U" in law_wrapper.extra_args and total_tokens > 0:
-                                result = scaling_law.compute_optimal_allocation(C=C, U=total_tokens)
+                            if "U" in law_wrapper.extra_args:
+                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = total_tokens if total_tokens > 0 else 1e15
+                                result = scaling_law.compute_optimal_allocation(C=C, U=U_value)
                             else:
                                 result = scaling_law.compute_optimal_allocation(C=C)
                             N_optimal.append(result['model'])
@@ -218,7 +213,13 @@ with tab1:
                             N_optimal.append(np.nan)
                             D_optimal.append(np.nan)
                     
-                    ax1.loglog(D_optimal, N_optimal, label=f"{law_name} (optimal)", linewidth=2)
+                    # Add suffix to indicate data constraint status
+                    if "U" in law_wrapper.extra_args:
+                        label_suffix = f" (U={total_tokens if total_tokens > 0 else '∞'})"
+                    else:
+                        label_suffix = ""
+                    
+                    ax1.loglog(D_optimal, N_optimal, label=f"{law_name}{label_suffix}", linewidth=2)
 
                 # Add constraint line and intersection points
                 if compute_budget:
@@ -233,14 +234,12 @@ with tab1:
                     for law_name in selected_laws:
                         law_wrapper = ALL_SCALING_LAWS[law_name]
                         scaling_law = law_wrapper.scaling_law
-                        
-                        # Skip data-constrained laws if no unique tokens provided
-                        if "U" in law_wrapper.extra_args and total_tokens == 0:
-                            continue
                             
                         try:
-                            if "U" in law_wrapper.extra_args and total_tokens > 0:
-                                result = scaling_law.compute_optimal_allocation(C=compute_budget, U=total_tokens)
+                            if "U" in law_wrapper.extra_args:
+                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = total_tokens if total_tokens > 0 else 1e15
+                                result = scaling_law.compute_optimal_allocation(C=compute_budget, U=U_value)
                             else:
                                 result = scaling_law.compute_optimal_allocation(C=compute_budget)
                             ax1.scatter(result['data'], result['model'], 
@@ -253,27 +252,31 @@ with tab1:
                         law_wrapper = ALL_SCALING_LAWS[law_name]
                         scaling_law = law_wrapper.scaling_law
                         
-                        # Skip data-constrained laws if no unique tokens provided
-                        if "U" in law_wrapper.extra_args and total_tokens == 0:
-                            continue
-                        
                         # Plot iso-loss curve for target loss
                         N_isoloss = np.logspace(6, 12, 100)
                         D_isoloss = []
                         
                         for N in N_isoloss:
                             try:
-                                if "U" in law_wrapper.extra_args and total_tokens > 0:
-                                    D = scaling_law.N_to_D(N, target_loss, U=total_tokens)
+                                if "U" in law_wrapper.extra_args:
+                                    # Use provided total_tokens if > 0, otherwise assume unlimited unique data
+                                    U_value = total_tokens if total_tokens > 0 else 1e15
+                                    D = scaling_law.N_to_D(N, target_loss, U=U_value)
                                 else:
                                     D = scaling_law.N_to_D(N, target_loss)
                                 D_isoloss.append(D)
                             except Exception:
                                 D_isoloss.append(np.nan)
                         
+                        # Add suffix to indicate data constraint status
+                        if "U" in law_wrapper.extra_args:
+                            label_suffix = f" (U={total_tokens if total_tokens > 0 else '∞'})"
+                        else:
+                            label_suffix = ""
+                        
                         ax1.loglog(D_isoloss, N_isoloss, 
                                  '--', alpha=0.7, linewidth=1,
-                                 label=f'{law_name} iso-loss = {target_loss}')
+                                 label=f'{law_name}{label_suffix} iso-loss = {target_loss}')
 
                 ax1.set_xlabel("Training Tokens (D)")
                 ax1.set_ylabel("Model Size (N)")
@@ -292,15 +295,13 @@ with tab1:
                     law_wrapper = ALL_SCALING_LAWS[law_name]
                     scaling_law = law_wrapper.scaling_law
 
-                    # Skip data-constrained laws if no unique tokens provided
-                    if "U" in law_wrapper.extra_args and total_tokens == 0:
-                        continue
-
                     ratios = []
                     for C in compute_budgets:
                         try:
-                            if "U" in law_wrapper.extra_args and total_tokens > 0:
-                                result = scaling_law.compute_optimal_allocation(C=C, U=total_tokens)
+                            if "U" in law_wrapper.extra_args:
+                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = total_tokens if total_tokens > 0 else 1e15
+                                result = scaling_law.compute_optimal_allocation(C=C, U=U_value)
                             else:
                                 result = scaling_law.compute_optimal_allocation(C=C)
                             ratio = result["data"] / result["model"]
@@ -308,7 +309,13 @@ with tab1:
                         except Exception:
                             ratios.append(np.nan)
 
-                    ax2.loglog(compute_budgets, ratios, label=law_name, linewidth=2)
+                    # Add suffix to indicate data constraint status
+                    if "U" in law_wrapper.extra_args:
+                        label_suffix = f" (U={total_tokens if total_tokens > 0 else '∞'})"
+                    else:
+                        label_suffix = ""
+
+                    ax2.loglog(compute_budgets, ratios, label=f"{law_name}{label_suffix}", linewidth=2)
 
                 ax2.set_xlabel("Compute Budget (FLOPs)")
                 ax2.set_ylabel("Tokens per Parameter Ratio (D/N)")
