@@ -1,21 +1,29 @@
+import os
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-sys.path.append("./")
-sys.path.append("src/")
+# Add the current directory and src to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()
+sys.path.insert(0, current_dir)
+sys.path.insert(0, os.path.join(current_dir, 'src'))
 
-from src.scaling_laws import ALL_SCALING_LAWS
+try:
+    from src.scaling_laws import ALL_SCALING_LAWS
+except ImportError:
+    # Fallback import method
+    import scaling_laws
+    ALL_SCALING_LAWS = scaling_laws.ALL_SCALING_LAWS
 
 st.set_page_config(
-    page_title="Multilingual Scaling Laws", page_icon="📊", layout="wide"
+    page_title="Scaling Laws", page_icon="📊", layout="wide"
 )
 
-st.title("Multilingual Scaling Laws Explorer")
+st.title("Scaling Laws Explorer")
 st.markdown(
-    "An intuitive tool for understanding and interpreting scaling laws for ML models"
+    "An intuitive tool for understanding and interpreting scaling laws for natural language AI models"
 )
 
 # Create tabs for the two main features
@@ -182,6 +190,7 @@ with tab1:
                                 D_values.append(np.nan)
 
                     ax1.loglog(D_values, N_values, label=law_name, linewidth=2)
+                    print(law_name, D_values[:10])
 
                 ax1.set_xlabel("Training Tokens (D)")
                 ax1.set_ylabel("Model Size (N)")
