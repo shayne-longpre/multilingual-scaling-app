@@ -64,25 +64,25 @@ ALL_SCALING_LAWS["Chinchilla Replication"] = ScalingLawWrapper(
 # -----------------------------------------------------------------------------
 # Data Constrained Scaling Laws (2023)
 # -----------------------------------------------------------------------------
-ALL_SCALING_LAWS["Data-Constrained Scaling Law"] = ScalingLawWrapper(
-    name="Data-Constrained Scaling Law",
-    scaling_law=DataConstrainedScalingLaw(
-        LawParams(
-            A=np.exp(6.255414),
-            B=np.exp(7.3049974),
-            alpha=0.3526596,
-            beta=0.3526596,
-            irreducible=np.exp(0.6254804),
-            extras={"rd_star": 15.387756, "rn_star": 5.309743},
-        )
-    ),
-    paper="https://proceedings.neurips.cc/paper_files/paper/2023/file/"
-    "9d89448b63ce1e2e8dc7af72c984c196-Paper-Conference.pdf",
-    publication_date="",  # TODO
-    model_architecture="",
-    training_data="",
-    languages="",
-    compute_budget_range=(0, 0),
-    extra_args=[],
-    notes="",
-)
+# ALL_SCALING_LAWS["Data-Constrained Scaling Law"] = ScalingLawWrapper(
+#     name="Data-Constrained Scaling Law",
+#     scaling_law=DataConstrainedScalingLaw(
+#         LawParams(
+#             A=np.exp(6.255414),
+#             B=np.exp(7.3049974),
+#             alpha=0.3526596,
+#             beta=0.3526596,
+#             irreducible=np.exp(0.6254804),
+#             extras={"rd_star": 15.387756, "rn_star": 5.309743},
+#         )
+#     ),
+#     paper="https://proceedings.neurips.cc/paper_files/paper/2023/file/"
+#     "9d89448b63ce1e2e8dc7af72c984c196-Paper-Conference.pdf",
+#     publication_date="",  # TODO
+#     model_architecture="",
+#     training_data="",
+#     languages="",
+#     compute_budget_range=(0, 0),
+#     extra_args=[],
+#     notes="",
+# )
