@@ -11,6 +11,7 @@ from src.scaling_law_classes.data_constrained_scaling_law import (
 )
 from src.scaling_law_classes.scaling_law import LawParams, ScalingLawWrapper
 
+
 ALL_SCALING_LAWS = {}
 
 # -----------------------------------------------------------------------------
@@ -41,7 +42,7 @@ ALL_SCALING_LAWS["Chinchilla"] = ScalingLawWrapper(
 # Chinchilla Replication Study (2024)
 # -----------------------------------------------------------------------------
 ALL_SCALING_LAWS["Chinchilla Replication"] = ScalingLawWrapper(
-    name="Replication",
+    name="Chinchilla Replication",
     scaling_law=BasicScalingLaw(
         LawParams(
             A=482.01,

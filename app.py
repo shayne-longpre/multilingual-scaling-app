@@ -190,7 +190,8 @@ with tab1:
                                 D_values.append(np.nan)
 
                     ax1.loglog(D_values, N_values, label=law_name, linewidth=2)
-                    print(law_name, D_values[:10])
+                    st.text(law_name)
+                    st.text(D_values[:10])
 
                 ax1.set_xlabel("Training Tokens (D)")
                 ax1.set_ylabel("Model Size (N)")
