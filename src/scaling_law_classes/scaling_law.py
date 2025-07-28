@@ -25,20 +25,6 @@ class LawParams:
     extras: Mapping[str, float] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class ScalingLawWrapper:
-    name: str
-    scaling_law: ScalingLaw
-    paper: str
-    publication_date: str
-    model_architecture: str
-    training_data: str
-    languages: List[str]
-    compute_budget_range: Tuple[int, int]
-    extra_args: List[str]
-    notes: str
-
-
 class ScalingLaw(ABC):
     """Common API for all scaling‑law families.
     
@@ -275,3 +261,18 @@ class ScalingLaw(ABC):
         The equation is:
         (β·B/α + B)·D^(-β) + (T·β·B)/(3·α)·D^(-β-1) + E - L = 0
         """
+
+
+
+@dataclass(frozen=True)
+class ScalingLawWrapper:
+    name: str
+    scaling_law: ScalingLaw
+    paper: str
+    publication_date: str
+    model_architecture: str
+    training_data: str
+    languages: List[str]
+    compute_budget_range: Tuple[int, int]
+    extra_args: List[str]
+    notes: str
