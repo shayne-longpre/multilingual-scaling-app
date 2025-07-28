@@ -1,14 +1,8 @@
 import sys
-import math
+
 import numpy as np
-import pandas as pd
-import scipy.optimize as opt
 import torch
-
-from typing import Mapping, Sequence, Tuple, Dict, List, Callable, Iterable, Optional
-
-from scipy.optimize import brentq, minimize_scalar, newton
-from sklearn.metrics import r2_score
+from scipy.optimize import brentq
 
 sys.path.append("./")
 sys.path.append("src/")
@@ -20,7 +14,6 @@ class DataConstrainedScalingLaw(ScalingLaw):
     variables = ("N", "D", "U")
     default_vars = {"N": 1.0, "D": 1.0, "U": 1.0}
 
-
     # --- NumPy loss ------------------------------------------------------
     def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
         p = self.params
@@ -28,15 +21,22 @@ class DataConstrainedScalingLaw(ScalingLaw):
         RD = np.maximum((D / U) - 1, 0)
         UN = np.minimum(N, self.D_to_N(U))
         RN = np.maximum((N / UN) - 1, 0)
-        model_denom = UN + UN * p.extras["rn_star"] * (1-np.exp(-1*RN/p.extras["rn_star"]))
-        data_denom = U + U * p.extras["rd_star"] * (1 - np.exp(-1*RD/(p.extras["rd_star"])))
+        model_denom = UN + UN * p.extras["rn_star"] * (
+            1 - np.exp(-1 * RN / p.extras["rn_star"])
+        )
+        data_denom = U + U * p.extras["rd_star"] * (
+            1 - np.exp(-1 * RD / (p.extras["rd_star"]))
+        )
 
-        loss = p.irreducible + (p.A / (model_denom ** p.alpha)) + (p.B / (data_denom ** p.beta))
+        loss = (
+            p.irreducible
+            + (p.A / (model_denom**p.alpha))
+            + (p.B / (data_denom**p.beta))
+        )
         return loss
 
-
     def D_to_N(self, D):
-        return (D * self.G)**(self.params.beta/self.params.alpha) * self.G
+        return (D * self.G) ** (self.params.beta / self.params.alpha) * self.G
 
     # --- Numeric N → D using root‑finder --------------------------------
     def N_to_D(self, N: float, target_loss: float, **other_vars) -> float:
@@ -67,20 +67,24 @@ class DataConstrainedScalingLaw(ScalingLaw):
         a, b, e, alpha, beta, ep_star, n_star = theta
         tm = inp[:, 0] + inp[:, 0] * n_star * (1 - torch.exp(-inp[:, 3] / n_star))
         td = inp[:, 1] + inp[:, 1] * ep_star * (1 - torch.exp(-inp[:, 2] / ep_star))
-        pre = torch.stack([
-            a - alpha * torch.log(tm),
-            b - beta * torch.log(td),
-            e.expand(inp.shape[0]),
-        ])
+        pre = torch.stack(
+            [
+                a - alpha * torch.log(tm),
+                b - beta * torch.log(td),
+                e.expand(inp.shape[0]),
+            ]
+        )
         post = torch.logsumexp(pre, dim=0)
-        return torch.nn.functional.huber_loss(post, torch.log(inp[:, 4]), delta=1e-3, reduction='none').sum()
+        return torch.nn.functional.huber_loss(
+            post, torch.log(inp[:, 4]), delta=1e-3, reduction="none"
+        ).sum()
 
     @staticmethod
     def numpy_loss(inp: np.ndarray, params: np.ndarray) -> np.ndarray:
         a, b, e, alpha, beta, ep_star, n_star = params
         UN, U, RD, RN = inp[:, 0], inp[:, 1], inp[:, 2], inp[:, 3]
         tm = UN + UN * n_star * (1 - np.exp(-RN / n_star))
-        td = U  +  U  * ep_star * (1 - np.exp(-RD / ep_star))
+        td = U + U * ep_star * (1 - np.exp(-RD / ep_star))
         return np.exp(e) + np.exp(a) / tm**alpha + np.exp(b) / td**beta
 
     def iso_loss_function(self, target_loss: float, **other_vars):

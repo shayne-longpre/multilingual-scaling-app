@@ -1,47 +1,40 @@
 import sys
-import json
-import os
-from collections import defaultdict
-import numpy as np
-import pandas as pd
-import tqdm
 
-from matplotlib import pyplot as plt
-from matplotlib.patches import Rectangle
-import statsmodels.api as sm
+import numpy as np
 import seaborn as sns
-from matplotlib.colors import TwoSlopeNorm
-from scipy.interpolate import griddata
+from matplotlib import pyplot as plt
 
 sys.path.append("./")
 sys.path.append("src/")
 
-from src import scaling_laws
-# from src import madlad_constants  # Commented out as it doesn't exist yet
+# from src import scaling_laws  # Removed unused import
 
 
 def num_fmt(n):
-   for unit, div in zip(['', 'K', 'M', 'B', 'T'], [1, 1e3, 1e6, 1e9, 1e12]):
-       if abs(n) < div * 1000:
-           return f"{n/div:.{0 if abs(n) >= div * 10 else 1}f}{unit}"
-   return f"{n/1e12:.1f}T"
+    for unit, div in zip(["", "K", "M", "B", "T"], [1, 1e3, 1e6, 1e9, 1e12]):
+        if abs(n) < div * 1000:
+            return f"{n/div:.{0 if abs(n) >= div * 10 else 1}f}{unit}"
+    return f"{n/1e12:.1f}T"
 
 
 def plot_colored_lines2(
-    df, xlabel, ylabel,
+    df,
+    xlabel,
+    ylabel,
     *,
     z_order=None,
     savepath=None,
-    x_vlines=None, y_hlines=None,
+    x_vlines=None,
+    y_hlines=None,
     log_scale=None,
     colors=None,
-    line_styles=None,           # ← flexible, user-driven
-    default_line_style=None,    # ← optional global fallback
+    line_styles=None,  # ← flexible, user-driven
+    default_line_style=None,  # ← optional global fallback
     key_points=None,
     figsize=(10, 6),
     title=None,
     annotate_points=True,
-    legend_title='Category (z)'
+    legend_title="Category (z)",
 ):
     """
     Plot multiple lines coloured by `colors` and styled by `line_styles`.
@@ -61,8 +54,10 @@ def plot_colored_lines2(
     plt.figure(figsize=figsize)
 
     # ----- plotting order -----
-    unique_labels = df['z'].unique()
-    plot_order = (z_order or []) + [lbl for lbl in unique_labels if lbl not in (z_order or [])]
+    unique_labels = df["z"].unique()
+    plot_order = (z_order or []) + [
+        lbl for lbl in unique_labels if lbl not in (z_order or [])
+    ]
 
     # ----- colour mapping -----
     if colors is None:
@@ -70,13 +65,13 @@ def plot_colored_lines2(
         color_mapping = dict(zip(plot_order, palette))
     elif isinstance(colors, dict):
         color_mapping = colors
-    else:                                    # list
+    else:  # list
         color_mapping = dict(zip(plot_order, colors))
 
     # ----- style mapping -------
-    _fallback = {'linestyle': '-', 'linewidth': 2.0, 'alpha': 1.0}
+    _fallback = {"linestyle": "-", "linewidth": 2.0, "alpha": 1.0}
     if isinstance(default_line_style, str):
-        _fallback['linestyle'] = default_line_style
+        _fallback["linestyle"] = default_line_style
     elif isinstance(default_line_style, dict):
         _fallback.update(default_line_style)
 
@@ -86,33 +81,40 @@ def plot_colored_lines2(
     elif isinstance(line_styles, dict):
         style_mapping = {
             lbl: (
-                {'linestyle': line_styles[lbl]}           # <-- fix is here
-                if isinstance(line_styles[lbl], str)
-                else {**_fallback, **line_styles[lbl]}
-            ) if lbl in line_styles else _fallback
+                (
+                    {"linestyle": line_styles[lbl]}  # <-- fix is here
+                    if isinstance(line_styles[lbl], str)
+                    else {**_fallback, **line_styles[lbl]}
+                )
+                if lbl in line_styles
+                else _fallback
+            )
             for lbl in plot_order
         }
 
     else:  # line_styles is a list
         style_mapping = {
             lbl: (
-                {'linestyle': ls, **_fallback} if isinstance(ls, str) else {**_fallback, **ls}
+                {"linestyle": ls, **_fallback}
+                if isinstance(ls, str)
+                else {**_fallback, **ls}
             )
             for lbl, ls in zip(plot_order, line_styles)
         }
 
     # ----- main plot -----------
     for lbl in plot_order:
-        subset = df[df['z'] == lbl]
+        subset = df[df["z"] == lbl]
         style = style_mapping[lbl]
         plt.plot(
-            subset['x'], subset['y'],
+            subset["x"],
+            subset["y"],
             label=lbl,
             color=color_mapping[lbl],
-            linestyle=style.get('linestyle', '-'),
-            linewidth=style.get('linewidth', 2),
-            alpha=style.get('alpha', 1.0),
-            zorder=3
+            linestyle=style.get("linestyle", "-"),
+            linewidth=style.get("linewidth", 2),
+            alpha=style.get("alpha", 1.0),
+            zorder=3,
         )
 
     # ----- key points ----------
@@ -121,29 +123,41 @@ def plot_colored_lines2(
             if lbl not in color_mapping:
                 continue
             for x, y, marker in pts:
-                plt.plot(x, y, marker, color=color_mapping[lbl],
-                         markersize=8, alpha=0.7, zorder=4)
+                plt.plot(
+                    x,
+                    y,
+                    marker,
+                    color=color_mapping[lbl],
+                    markersize=8,
+                    alpha=0.7,
+                    zorder=4,
+                )
                 if annotate_points:
-                    plt.annotate(f'{x:.1f}x, {y:.1f}x',
-                                 xy=(x, y), xytext=(5, 5),
-                                 textcoords='offset points', fontsize=9, alpha=0.8)
+                    plt.annotate(
+                        f"{x:.1f}x, {y:.1f}x",
+                        xy=(x, y),
+                        xytext=(5, 5),
+                        textcoords="offset points",
+                        fontsize=9,
+                        alpha=0.8,
+                    )
 
     # ----- reference lines -----
     for x in x_vlines or []:
-        plt.axvline(x=x, color='gray', linestyle='--', linewidth=1, zorder=0)
+        plt.axvline(x=x, color="gray", linestyle="--", linewidth=1, zorder=0)
     for y in y_hlines or []:
-        plt.axhline(y=y, color='gray', linestyle='--', linewidth=1, zorder=0)
+        plt.axhline(y=y, color="gray", linestyle="--", linewidth=1, zorder=0)
 
     # ----- scales / labels -----
-    if log_scale in {'x', 'both'}:
-        plt.xscale('log')
-    if log_scale in {'y', 'both'}:
-        plt.yscale('log')
+    if log_scale in {"x", "both"}:
+        plt.xscale("log")
+    if log_scale in {"y", "both"}:
+        plt.yscale("log")
 
     plt.xlabel(xlabel, fontsize=14)
     plt.ylabel(ylabel, fontsize=14)
-    plt.title(title or f'{ylabel} vs. {xlabel}', fontsize=16, fontweight='bold')
-    plt.legend(title=legend_title, fontsize=12, title_fontsize='13', frameon=True)
+    plt.title(title or f"{ylabel} vs. {xlabel}", fontsize=16, fontweight="bold")
+    plt.legend(title=legend_title, fontsize=12, title_fontsize="13", frameon=True)
     sns.despine(trim=True)
     plt.tight_layout()
 
@@ -155,15 +169,15 @@ def plot_colored_lines2(
 
 
 def plot_optimal_scaling_line(
-    scaling_laws: dict,
+    scaling_laws_dict: dict,
     compute_budget: float = None,
     target_loss: float = None,
     ax: plt.Axes = None,
-    **kwargs
+    **kwargs,
 ) -> plt.Axes:
     """
     Plot optimal scaling lines for different scaling laws.
-    
+
     Parameters:
     -----------
     scaling_laws : dict
@@ -174,7 +188,7 @@ def plot_optimal_scaling_line(
         Target loss value
     ax : matplotlib Axes, optional
         Axes to plot on. If None, creates new figure
-    
+
     Returns:
     --------
     ax : matplotlib Axes
@@ -182,29 +196,29 @@ def plot_optimal_scaling_line(
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 8))
-    
+
     # Plot logic will be implemented based on the specific requirements
     # This is a placeholder for now
-    
+
     ax.set_xlabel("Training Tokens (D)")
     ax.set_ylabel("Model Size (N)")
     ax.set_title("Optimal Scaling Lines")
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
-    
+
     return ax
 
 
 def plot_tokens_per_param_ratio(
-    scaling_laws: dict,
+    scaling_laws_dict: dict,
     compute_budgets: np.ndarray = None,
     ax: plt.Axes = None,
-    **kwargs
+    **kwargs,
 ) -> plt.Axes:
     """
     Plot the tokens per parameter ratio (D/N) vs compute budget.
-    
+
     Parameters:
     -----------
     scaling_laws : dict
@@ -213,7 +227,7 @@ def plot_tokens_per_param_ratio(
         Array of compute budgets to evaluate
     ax : matplotlib Axes, optional
         Axes to plot on. If None, creates new figure
-    
+
     Returns:
     --------
     ax : matplotlib Axes
@@ -221,18 +235,18 @@ def plot_tokens_per_param_ratio(
     """
     if ax is None:
         fig, ax = plt.subplots(figsize=(10, 8))
-    
+
     if compute_budgets is None:
         compute_budgets = np.logspace(15, 25, 100)
-    
+
     # Plot logic will be implemented based on the specific requirements
     # This is a placeholder for now
-    
+
     ax.set_xlabel("Compute Budget (FLOPs)")
     ax.set_ylabel("Tokens per Parameter Ratio (D/N)")
     ax.set_title("Optimal Tokens per Parameter Ratio")
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
-    
+
     return ax
