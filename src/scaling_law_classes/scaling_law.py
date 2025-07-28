@@ -164,7 +164,7 @@ class ScalingLaw(ABC):
     def compute_optimal_allocation(
         self,
         C: float,
-        N_bounds: tuple[float, float] = (1e3, 1e12),
+        N_bounds: Tuple[float, float] = (1e3, 1e12),
         **other_vars,
     ):
         """

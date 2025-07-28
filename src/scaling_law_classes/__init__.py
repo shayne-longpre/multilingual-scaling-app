@@ -1,0 +1,1 @@
+# Empty init file to make scaling_law_classes a Python package
