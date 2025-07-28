@@ -38,8 +38,11 @@ class DataConstrainedScalingLaw(ScalingLaw):
     def D_to_N(self, D):
         return (D * self.G) ** (self.params.beta / self.params.alpha) * self.G
 
-    def DF_to_N(self, D, L):
-        pass  # TODO
+    def DL_to_N(self, D, L):
+        return 0.0  # TODO
+
+    def compute_optimal_train_tokens(self, x, T, L):
+        return 0.0 # TODO
 
     # --- Numeric N → D using root‑finder --------------------------------
     def N_to_D(self, N: float, target_loss: float, **other_vars) -> float:
