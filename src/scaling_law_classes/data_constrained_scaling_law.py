@@ -38,6 +38,9 @@ class DataConstrainedScalingLaw(ScalingLaw):
     def D_to_N(self, D):
         return (D * self.G) ** (self.params.beta / self.params.alpha) * self.G
 
+    def DF_to_N(self, D, L):
+        pass  # TODO
+
     # --- Numeric N → D using root‑finder --------------------------------
     def N_to_D(self, N: float, target_loss: float, **other_vars) -> float:
         U = other_vars.get("U")
