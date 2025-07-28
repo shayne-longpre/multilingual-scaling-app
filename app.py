@@ -166,32 +166,70 @@ with tab1:
                 # Create plots
                 st.markdown("### Visualizations")
 
-                # Plot 1: Optimal scaling line
+                # Plot 1: Optimal scaling lines
                 fig1, ax1 = plt.subplots(figsize=(8, 6))
 
+                # Generate range of compute budgets for optimal scaling curves
+                compute_range = np.logspace(15, 25, 100)
+                
                 for law_name in selected_laws:
                     law_wrapper = ALL_SCALING_LAWS[law_name]
                     scaling_law = law_wrapper.scaling_law
 
-                    # Generate data points for the plot
-                    N_values = np.logspace(6, 12, 100)  # 1M to 1T parameters
-                    D_values = []
+                    # Plot optimal scaling curve: optimal (N*, D*) for different compute budgets
+                    N_optimal = []
+                    D_optimal = []
+                    
+                    for C in compute_range:
+                        try:
+                            result = scaling_law.compute_optimal_allocation(C=C)
+                            N_optimal.append(result['model'])
+                            D_optimal.append(result['data'])
+                        except Exception:
+                            N_optimal.append(np.nan)
+                            D_optimal.append(np.nan)
+                    
+                    ax1.loglog(D_optimal, N_optimal, label=f"{law_name} (optimal)", linewidth=2)
 
-                    for N in N_values:
-                        if compute_budget:
-                            D = compute_budget / (scaling_law.FLOPS_COEFF * N)
-                            D_values.append(D)
-                        else:
-                            # For target loss mode
+                # Add constraint line and intersection points
+                if compute_budget:
+                    # Add iso-compute constraint line
+                    N_constraint = np.logspace(6, 12, 100)
+                    D_constraint = [compute_budget / (6.0 * N) for N in N_constraint]
+                    ax1.loglog(D_constraint, N_constraint, 
+                             'k--', alpha=0.7, linewidth=1, 
+                             label=f'Compute Budget = {compute_budget:.1e} FLOPs')
+                    
+                    # Mark intersection points (current optimal allocations)
+                    for law_name in selected_laws:
+                        law_wrapper = ALL_SCALING_LAWS[law_name]
+                        scaling_law = law_wrapper.scaling_law
+                        try:
+                            result = scaling_law.compute_optimal_allocation(C=compute_budget)
+                            ax1.scatter(result['data'], result['model'], 
+                                      s=100, alpha=0.8, zorder=5)
+                        except Exception:
+                            pass
+                elif target_loss:
+                    # For target loss mode, show iso-loss curves
+                    for law_name in selected_laws:
+                        law_wrapper = ALL_SCALING_LAWS[law_name]
+                        scaling_law = law_wrapper.scaling_law
+                        
+                        # Plot iso-loss curve for target loss
+                        N_isoloss = np.logspace(6, 12, 100)
+                        D_isoloss = []
+                        
+                        for N in N_isoloss:
                             try:
                                 D = scaling_law.N_to_D(N, target_loss)
-                                D_values.append(D)
+                                D_isoloss.append(D)
                             except Exception:
-                                D_values.append(np.nan)
-
-                    ax1.loglog(D_values, N_values, label=law_name, linewidth=2)
-                    st.text(law_name)
-                    st.text(D_values[:10])
+                                D_isoloss.append(np.nan)
+                        
+                        ax1.loglog(D_isoloss, N_isoloss, 
+                                 '--', alpha=0.7, linewidth=1,
+                                 label=f'{law_name} iso-loss = {target_loss}')
 
                 ax1.set_xlabel("Training Tokens (D)")
                 ax1.set_ylabel("Model Size (N)")
