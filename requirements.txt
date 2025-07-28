@@ -1,0 +1,14 @@
+jsonlines
+numpy
+pandas
+pytest
+torch
+tqdm
+matplotlib
+scipy
+scikit-learn
+jupyterlab
+seaborn
+statsmodels
+altair
+streamlit
