@@ -29,13 +29,13 @@ ALL_SCALING_LAWS["Chinchilla"] = ScalingLawWrapper(
         )
     ),
     paper="https://arxiv.org/pdf/2203.15556",
-    publication_date="",  # TODO
-    model_architecture="",
-    training_data="",
-    languages="",
-    compute_budget_range=(0, 0),
+    publication_date="2022-03-29",
+    model_architecture="Transformer (decoder-only)",
+    training_data="MassiveText (1.4T tokens)",
+    languages=["English"],
+    compute_budget_range=(int(6e18), int(5e23)),  # ~6 × 10^18 to 5 × 10^23 FLOPs
     extra_args=[],
-    notes="",
+    notes="Original Chinchilla paper by DeepMind. Established compute-optimal training with L = E + A/N^α + B/D^β",
 )
 
 # -----------------------------------------------------------------------------
@@ -53,37 +53,37 @@ ALL_SCALING_LAWS["Chinchilla Replication"] = ScalingLawWrapper(
         )
     ),
     paper="https://www.arxiv.org/pdf/2404.10102",
-    publication_date="",  # TODO
-    model_architecture="",
-    training_data="",
-    languages="",
-    compute_budget_range=(0, 0),
+    publication_date="2024-04-15",
+    model_architecture="Transformer (decoder-only, RMSNorm)",
+    training_data="FineWeb (15T tokens)",
+    languages=["English"],
+    compute_budget_range=(int(1e19), int(1e24)),  # ~10^19 to 10^24 FLOPs
     extra_args=[],
-    notes="",
+    notes="Replication study showing updated parameters with modern training practices and larger datasets",
 )
 
 # -----------------------------------------------------------------------------
 # Data Constrained Scaling Laws (2023)
 # -----------------------------------------------------------------------------
-# ALL_SCALING_LAWS["Data-Constrained Scaling Law"] = ScalingLawWrapper(
-#     name="Data-Constrained Scaling Law",
-#     scaling_law=DataConstrainedScalingLaw(
-#         LawParams(
-#             A=np.exp(6.255414),
-#             B=np.exp(7.3049974),
-#             alpha=0.3526596,
-#             beta=0.3526596,
-#             irreducible=np.exp(0.6254804),
-#             extras={"rd_star": 15.387756, "rn_star": 5.309743},
-#         )
-#     ),
-#     paper="https://proceedings.neurips.cc/paper_files/paper/2023/file/"
-#     "9d89448b63ce1e2e8dc7af72c984c196-Paper-Conference.pdf",
-#     publication_date="",  # TODO
-#     model_architecture="",
-#     training_data="",
-#     languages="",
-#     compute_budget_range=(0, 0),
-#     extra_args=[],
-#     notes="",
-# )
+ALL_SCALING_LAWS["Data-Constrained Scaling Law"] = ScalingLawWrapper(
+    name="Data-Constrained Scaling Law",
+    scaling_law=DataConstrainedScalingLaw(
+        LawParams(
+            A=np.exp(6.255414),
+            B=np.exp(7.3049974),
+            alpha=0.3526596,
+            beta=0.3526596,
+            irreducible=np.exp(0.6254804),
+            extras={"rd_star": 15.387756, "rn_star": 5.309743},
+        )
+    ),
+    paper="https://proceedings.neurips.cc/paper_files/paper/2023/file/"
+    "9d89448b63ce1e2e8dc7af72c984c196-Paper-Conference.pdf",
+    publication_date="2023-12-10",
+    model_architecture="Transformer (decoder-only)",
+    training_data="RedPajama and other datasets (limited unique tokens)",
+    languages=["English"],
+    compute_budget_range=(int(1e18), int(1e23)),  # ~10^18 to 10^23 FLOPs
+    extra_args=["U"],  # Requires unique tokens parameter
+    notes="Extends basic scaling laws to account for data repetition effects when training on limited unique tokens",
+)
