@@ -129,15 +129,37 @@ with tab1:
                     if compute_budget is not None:
                         # Use compute budget
                         if inference_tokens > 0:
-                            result = scaling_law.compute_optimal_allocation_inference(
-                                compute_budget=compute_budget,
-                                D_inference=inference_tokens,
-                                mfu=mfu_inference,
-                            )
+                            # Handle data-constrained case for inference
+                            if "U" in law_wrapper.extra_args and total_tokens > 0:
+                                result = scaling_law.compute_optimal_allocation_inference(
+                                    compute_budget=compute_budget,
+                                    D_inference=inference_tokens,
+                                    mfu=mfu_inference,
+                                    U=total_tokens,
+                                )
+                            elif "U" in law_wrapper.extra_args:
+                                # Skip data-constrained law if no unique tokens provided
+                                continue
+                            else:
+                                result = scaling_law.compute_optimal_allocation_inference(
+                                    compute_budget=compute_budget,
+                                    D_inference=inference_tokens,
+                                    mfu=mfu_inference,
+                                )
                         else:
-                            result = scaling_law.compute_optimal_allocation(
-                                C=compute_budget
-                            )
+                            # Handle data-constrained case for basic allocation
+                            if "U" in law_wrapper.extra_args and total_tokens > 0:
+                                result = scaling_law.compute_optimal_allocation(
+                                    C=compute_budget, U=total_tokens
+                                )
+                            elif "U" in law_wrapper.extra_args:
+                                # Skip data-constrained law if no unique tokens provided
+                                st.info(f"Skipping {law_name}: requires 'Total Training Tokens' to be specified")
+                                continue
+                            else:
+                                result = scaling_law.compute_optimal_allocation(
+                                    C=compute_budget
+                                )
 
                         results.append(
                             {
@@ -176,13 +198,20 @@ with tab1:
                     law_wrapper = ALL_SCALING_LAWS[law_name]
                     scaling_law = law_wrapper.scaling_law
 
+                    # Skip data-constrained laws if no unique tokens provided
+                    if "U" in law_wrapper.extra_args and total_tokens == 0:
+                        continue
+
                     # Plot optimal scaling curve: optimal (N*, D*) for different compute budgets
                     N_optimal = []
                     D_optimal = []
                     
                     for C in compute_range:
                         try:
-                            result = scaling_law.compute_optimal_allocation(C=C)
+                            if "U" in law_wrapper.extra_args and total_tokens > 0:
+                                result = scaling_law.compute_optimal_allocation(C=C, U=total_tokens)
+                            else:
+                                result = scaling_law.compute_optimal_allocation(C=C)
                             N_optimal.append(result['model'])
                             D_optimal.append(result['data'])
                         except Exception:
@@ -204,8 +233,16 @@ with tab1:
                     for law_name in selected_laws:
                         law_wrapper = ALL_SCALING_LAWS[law_name]
                         scaling_law = law_wrapper.scaling_law
+                        
+                        # Skip data-constrained laws if no unique tokens provided
+                        if "U" in law_wrapper.extra_args and total_tokens == 0:
+                            continue
+                            
                         try:
-                            result = scaling_law.compute_optimal_allocation(C=compute_budget)
+                            if "U" in law_wrapper.extra_args and total_tokens > 0:
+                                result = scaling_law.compute_optimal_allocation(C=compute_budget, U=total_tokens)
+                            else:
+                                result = scaling_law.compute_optimal_allocation(C=compute_budget)
                             ax1.scatter(result['data'], result['model'], 
                                       s=100, alpha=0.8, zorder=5)
                         except Exception:
@@ -216,13 +253,20 @@ with tab1:
                         law_wrapper = ALL_SCALING_LAWS[law_name]
                         scaling_law = law_wrapper.scaling_law
                         
+                        # Skip data-constrained laws if no unique tokens provided
+                        if "U" in law_wrapper.extra_args and total_tokens == 0:
+                            continue
+                        
                         # Plot iso-loss curve for target loss
                         N_isoloss = np.logspace(6, 12, 100)
                         D_isoloss = []
                         
                         for N in N_isoloss:
                             try:
-                                D = scaling_law.N_to_D(N, target_loss)
+                                if "U" in law_wrapper.extra_args and total_tokens > 0:
+                                    D = scaling_law.N_to_D(N, target_loss, U=total_tokens)
+                                else:
+                                    D = scaling_law.N_to_D(N, target_loss)
                                 D_isoloss.append(D)
                             except Exception:
                                 D_isoloss.append(np.nan)
@@ -248,10 +292,17 @@ with tab1:
                     law_wrapper = ALL_SCALING_LAWS[law_name]
                     scaling_law = law_wrapper.scaling_law
 
+                    # Skip data-constrained laws if no unique tokens provided
+                    if "U" in law_wrapper.extra_args and total_tokens == 0:
+                        continue
+
                     ratios = []
                     for C in compute_budgets:
                         try:
-                            result = scaling_law.compute_optimal_allocation(C=C)
+                            if "U" in law_wrapper.extra_args and total_tokens > 0:
+                                result = scaling_law.compute_optimal_allocation(C=C, U=total_tokens)
+                            else:
+                                result = scaling_law.compute_optimal_allocation(C=C)
                             ratio = result["data"] / result["model"]
                             ratios.append(ratio)
                         except Exception:
