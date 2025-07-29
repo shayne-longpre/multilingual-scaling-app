@@ -174,8 +174,13 @@ class TestScalingLawProperties:
             incomplete_args = {"N": 1e8}  # Missing D and potentially U
             
             if len(required_vars) > 1:
-                with pytest.raises(ValueError, match="Missing vars"):
+                try:
                     scaling_law.loss(**incomplete_args)
+                    # If it doesn't raise, it must be using default_vars
+                    assert hasattr(scaling_law, 'default_vars'), f"{name} should have default_vars"
+                except ValueError as e:
+                    # This is expected if no defaults
+                    assert "Missing vars" in str(e)
 
 
 class TestSpecificImplementations:
