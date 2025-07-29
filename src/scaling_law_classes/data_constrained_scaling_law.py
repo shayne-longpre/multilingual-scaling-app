@@ -7,7 +7,7 @@ from scipy.optimize import brentq
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw
+from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams
 
 
 class DataConstrainedScalingLaw(ScalingLaw):
@@ -101,7 +101,52 @@ class DataConstrainedScalingLaw(ScalingLaw):
     def compute_optimal_allocation(self, C, *, U, **kw):
         return super().compute_optimal_allocation(C, U=U, **kw)
 
-    # @classmethod
-    # def fit(cls, *args, **kw):
-    #     from src.scaling_fitters import fit_data_constrained_scaling
-    #     return fit_data_constrained_scaling(cls, *args, **kw)
+    @classmethod
+    def fit(cls, *args, **kw):
+        unique_tokens = data["U"].max()
+        pre_epoch_sample = data[data["D"] <= unique_tokens]
+
+        min_epochs = round(pre_epoch_sample["D"].min() / unique_tokens,2)
+        max_epochs = round(pre_epoch_sample["D"].max() / unique_tokens,2)
+        print(f"Number of data samples <1 epoch: {len(pre_epoch_sample)} / {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
+
+        orig_loss, basic = BasicScalingLaw.fit(pre_epoch_sample, metric=metric, tie=tie)
+        p0 = basic.params
+        a0, b0, e0 = map(math.log, [p0.A, p0.B, p0.irreducible])
+        print(orig_loss, p0)
+
+        alpha, beta = p0.alpha, p0.beta
+        def row_vec(r):
+            # correct N_sat – identical to BasicScalingLaw.D_to_N(U)
+            N_sat = (unique_tokens * basic.G) ** (beta / alpha) * basic.G
+
+            UN = min(r["N"], N_sat)                    # model denominator base
+            RD = max(r["D"] / unique_tokens - 1, 0)    # data reuse
+            RN = max(r["N"] / UN - 1, 0)               # model reuse
+
+            return [UN, unique_tokens, RD, RN]
+
+        X = np.stack([row_vec(r) for _, r in data.iterrows()]).astype(float)
+        y = data[metric].values.astype(float)
+
+        post_epoch_sample = data[data["D"] >= unique_tokens]
+        min_epochs = round(post_epoch_sample["D"].min() / unique_tokens,2)
+        max_epochs = round(post_epoch_sample["D"].max() / unique_tokens,2)
+        print(f"Number of data samples >1 epoch: {len(post_epoch_sample)} / {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
+
+        grid_vals = [(0, 20, 10), (0, 20, 10)]
+        torch_inputs = torch.tensor(np.c_[X, y], dtype=torch.float32)
+        # print(torch_inputs)
+        torch_inputs.require_grad = True
+        init = [a0, b0, e0, alpha, beta, 1, 1]      # 7-vector
+        loss, theta = minimize_scl_loss(
+            init_params   = init,
+            grid_specs    = grid_vals,              # grid over the LAST 2 parameters
+            params_to_fix = [0, 1, 2, 3, 4],        # first five are frozen
+            torch_loss    = cls.torch_loss,
+            inp_torch     = torch_inputs,
+        )
+
+        A,B,E,alpha,beta,rd,rn = theta
+        params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta, extras={"rd_star": rd, "rn_star": rn})
+        return loss, cls(params)

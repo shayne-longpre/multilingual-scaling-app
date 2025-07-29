@@ -6,7 +6,7 @@ import torch
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw
+from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams
 
 
 class BasicScalingLaw(ScalingLaw):
@@ -111,7 +111,31 @@ class BasicScalingLaw(ScalingLaw):
             + loss_diff
         )
 
-    # @classmethod
-    # def fit(cls, *args, **kw):
-    #     from src.scaling_fitters import fit_basic_scaling
-    #     return fit_basic_scaling(cls, *args, **kw)
+    @classmethod
+    def fit(cls, data, *args, **kw):
+        x_nd = data[["N", "D"]].values.astype(float)
+        y    = data["Loss"].values.astype(float)
+
+        unique_tokens = data["U"].iloc[0]
+        min_epochs = round(data["D"].min() / unique_tokens,2)
+        max_epochs = round(data["D"].max() / unique_tokens,2)
+        print(f"Data points: {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
+
+        # initial guess in log‑space: logA logB logE alpha (beta)
+        init = [0, 0, math.log(y.min()), 0.3] + ([] if tie else [0.3])
+
+        grid = [(0, 25, 5), (0, 25, 5), (-1, 1, 4), (0, 2, 4)]
+        loss, theta = minimize_scl_loss(
+            init_params=[0,0,0,0],  # ignored because grid_specs is provided
+            grid_specs=grid,
+            torch_loss    = cls.torch_loss,
+            inp_torch     = torch.tensor(np.c_[x_nd, y], dtype=torch.float32),
+            loss_kwargs   = {"tie": tie},
+        )
+
+        if tie:
+            A, B, E, alpha = theta ; beta = alpha
+        else:
+            A, B, E, alpha, beta = theta
+        params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta)
+        return loss, cls(params)

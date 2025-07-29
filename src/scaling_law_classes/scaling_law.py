@@ -66,6 +66,10 @@ class ScalingLaw(ABC):
     @abstractmethod
     def numpy_loss(X: np.ndarray, *theta, **kw) -> np.ndarray: ...
 
+    @abstractmethod
+    @classmethod
+    def fit(cls, *args, **kw): ...
+
     def D_to_N(self, D):
         return (D * self.G) ** (self.beta / self.alpha) * self.G
 
