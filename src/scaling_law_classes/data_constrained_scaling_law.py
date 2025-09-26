@@ -16,6 +16,9 @@ class DataConstrainedScalingLaw(ScalingLaw):
 
     # --- NumPy loss ------------------------------------------------------
     def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
+        if U > D:
+            U = D
+
         p = self.params
 
         RD = np.maximum((D / U) - 1, 0)

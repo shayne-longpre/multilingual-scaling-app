@@ -77,11 +77,10 @@ ALL_SCALING_LAWS["Data-Constrained Scaling Law"] = ScalingLawWrapper(
             extras={"rd_star": 15.387756, "rn_star": 5.309743},
         )
     ),
-    paper="https://proceedings.neurips.cc/paper_files/paper/2023/file/"
-    "9d89448b63ce1e2e8dc7af72c984c196-Paper-Conference.pdf",
+    paper="https://arxiv.org/pdf/2305.16264",
     publication_date="2023-12-10",
     model_architecture="Transformer (decoder-only)",
-    training_data="RedPajama and other datasets (limited unique tokens)",
+    training_data="C4 & OSCAR with varying unique tokens",
     languages=["English"],
     compute_budget_range=(int(1e18), int(1e23)),  # ~10^18 to 10^23 FLOPs
     extra_args=["U"],  # Requires unique tokens parameter
