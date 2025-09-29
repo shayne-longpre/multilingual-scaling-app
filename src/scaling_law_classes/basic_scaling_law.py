@@ -113,7 +113,8 @@ class BasicScalingLaw(ScalingLaw):
 
     @classmethod
     def fit(cls, data, *args, **kw):
-        x_nd = data[["N", "D"]].values.astype(float)
+        N  = data["N"].values.astype(float)
+        D  = data["D"].values.astype(float)
         y    = data["Loss"].values.astype(float)
 
         # unique_tokens = data["U"].iloc[0]
@@ -121,19 +122,22 @@ class BasicScalingLaw(ScalingLaw):
         # max_epochs = round(data["D"].max() / unique_tokens,2)
         # print(f"Data points: {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
 
-        # initial guess in log‑space: logA logB logE alpha (beta)
-        init = [0, 0, math.log(y.min()), 0.3] + ([] if tie else [0.3])
-
-        grid = [(0, 25, 5), (0, 25, 5), (-1, 1, 4), (0, 2, 4)]
-        loss, theta = minimize_scl_loss(
-            init_params=[0,0,0,0],  # ignored because grid_specs is provided
+        grid = {
+                'a': torch.arange(start=0, end=25, step=5),
+                'b': torch.arange(start=0, end=25, step=5),
+                'e': torch.arange(start=-1, end=1, step=0.5),
+                'alpha': torch.arange(start=0, end=2, step=0.5),
+                'beta': torch.arange(start=0, end=2, step=0.5)
+            }
+        loss, theta, pq = minimize_scl_loss(
+            init_params=None,  # ignored because grid_specs is provided
             grid_specs=grid,
             torch_loss    = cls.torch_loss,
-            inp_torch     = torch.tensor(np.c_[x_nd, y], dtype=torch.float32),
-            loss_kwargs   = {"tie": tie},
+            inp_torch     = torch.tensor(np.c_[N, D, y], dtype=torch.float32),
+            loss_kwargs   = {"tie": args.tie},
         )
 
-        if tie:
+        if args.tie:
             A, B, E, alpha = theta ; beta = alpha
         else:
             A, B, E, alpha, beta = theta

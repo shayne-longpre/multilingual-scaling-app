@@ -303,8 +303,10 @@ class ScalingLaw(ScalingLaw):
                     result = minimize(obj, init_params, args=(N[indices], D[indices], model_losses[indices]), tol=tol, method=method, jac=grad(obj) if use_grad else None)
 
                 # set beta value to alpha
-                if tie_alpha_beta:
-                    result.x[4] = result.x[3]
+                for tie_params in tie:
+                    tie_source = result.x[tie_params[0]]
+                    for i in tie_params[1:]:
+                        result.x[i] = tie_source
                 params, loss, success = result.x, result.fun, result.success
 
             results_dict[tuple(init_params)] = {'params': params, 'loss': loss}
@@ -327,25 +329,26 @@ class ScalingLaw(ScalingLaw):
 
         largest = heapq.nlargest(100, pq)
 
-        if best_params is not None:
-            best_params_untransformed = list(untransform_params(best_params))
-            A, B, E, alpha, beta = best_params_untransformed
-            print(f"Best fit parameters: A={A}, B={B}, E={E}, alpha={alpha}, beta={beta}")
-            print(f"Best loss: {best_loss}")
+        # if best_params is not None:
+        #     best_params_untransformed = list(untransform_params(best_params))
+        #     A, B, E, alpha, beta = best_params_untransformed
+        #     print(f"Best fit parameters: A={A}, B={B}, E={E}, alpha={alpha}, beta={beta}")
+        #     print(f"Best loss: {best_loss}")
 
-            param_list = np.array(param_list)
-            cov_matrix = np.cov(np.transpose(param_list))
-            param_list_untransformed = untransform_params(param_list)
-            cov_matrix_untransformed = np.cov(np.transpose(param_list_untransformed))
-            standard_errors = np.sqrt(np.diag(cov_matrix[:5, :5]))
-            standard_errors_untransformed = np.sqrt(np.diag(cov_matrix_untransformed[:5, :5]))
+        #     param_list = np.array(param_list)
+        #     cov_matrix = np.cov(np.transpose(param_list))
+        #     param_list_untransformed = untransform_params(param_list)
+        #     cov_matrix_untransformed = np.cov(np.transpose(param_list_untransformed))
+        #     standard_errors = np.sqrt(np.diag(cov_matrix[:5, :5]))
+        #     standard_errors_untransformed = np.sqrt(np.diag(cov_matrix_untransformed[:5, :5]))
 
-            parameter_labels = ["A", "B", "E", "alpha", "beta"]
-            print("Parameter estimates and their standard errors")
-            for index, label in enumerate(parameter_labels):
-                print("%s: %.5f (%.5f)" % (label, best_params_untransformed[index], standard_errors_untransformed[index]))
+        #     parameter_labels = ["A", "B", "E", "alpha", "beta"]
+        #     print("Parameter estimates and their standard errors")
+        #     for index, label in enumerate(parameter_labels):
+        #         print("%s: %.5f (%.5f)" % (label, best_params_untransformed[index], standard_errors_untransformed[index]))
 
-        else:
-            print("Optimization failed to converge.")
+        # else:
+        #     print("Optimization failed to converge.")
 
-        return {'pq': pq, 'loss': best_loss, 'params':best_params, 'form': form}
+        # return {'pq': pq, 'loss': best_loss, 'params':best_params, 'form': form}
+        return best_loss, best_params, pq
