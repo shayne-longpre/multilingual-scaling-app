@@ -10,12 +10,13 @@ from sklearn.metrics import r2_score
 
 @dataclass(frozen=True)
 class LawParams:
-    A: float
-    B: float
-    irreducible: float
-    alpha: float
-    beta: float
-    extras: Mapping[str, float] = field(default_factory=dict)
+    # A: float
+    # B: float
+    # irreducible: float
+    # alpha: float
+    # beta: float
+    # extras: Mapping[str, float] = field(default_factory=dict)
+    params: Mapping[str, float]
 
 
 class ScalingLaw(ABC):

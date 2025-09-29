@@ -315,7 +315,7 @@ class ScalingLaw(ScalingLaw):
                 loss = torch_loss(init_params, inp_torch, loss_kwargs=loss_kwargs)
                 success = True
             else:
-                obj = partial(torch_loss, inp=inp_torch, )
+                obj = partial(torch_loss, inp=inp_torch, form_exp_parts=form_exp_parts, loss_func=loss_kwargs.get('loss_func', 'log_huber'), tie=tie, delta=loss_kwargs.get('delta', 1e-3))
                 # if add_sigma or obj_name in ['scaled_log_huber']:
                 #     init_params = init_params + [0]
                 if method == 'nonlinear_least_squares':

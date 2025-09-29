@@ -110,7 +110,7 @@ class DataConstrainedScalingLaw(ScalingLaw):
         max_epochs = round(pre_epoch_sample["D"].max() / unique_tokens,2)
         print(f"Number of data samples <1 epoch: {len(pre_epoch_sample)} / {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
 
-        orig_loss, basic = BasicScalingLaw.fit(pre_epoch_sample, metric=metric, tie=tie)
+        orig_loss, basic, _ = BasicScalingLaw.fit(pre_epoch_sample, metric=metric, tie=tie)
         p0 = basic.params
         a0, b0, e0 = map(math.log, [p0.A, p0.B, p0.irreducible])
         print(orig_loss, p0)
@@ -147,6 +147,6 @@ class DataConstrainedScalingLaw(ScalingLaw):
             inp_torch     = torch_inputs,
         )
 
-        A,B,E,alpha,beta,rd,rn = theta
-        params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta, extras={"rd_star": rd, "rn_star": rn})
+        # A,B,E,alpha,beta,rd,rn = theta
+        params = LawParams(params={"A": np.exp(theta['a']), "B": np.exp(theta['b']), "E": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta'], "rd_star": theta['rd'], "rn_star": theta['rn']})
         return loss, cls(params)

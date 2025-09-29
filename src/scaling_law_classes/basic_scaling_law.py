@@ -113,9 +113,9 @@ class BasicScalingLaw(ScalingLaw):
 
     @classmethod
     def fit(cls, data, *args, **kw):
-        N  = data["N"].values.astype(float)
-        D  = data["D"].values.astype(float)
-        y    = data["Loss"].values.astype(float)
+        N = data["N"].values.astype(float)
+        D = data["D"].values.astype(float)
+        y = data["Loss"].values.astype(float)
 
         # unique_tokens = data["U"].iloc[0]
         # min_epochs = round(data["D"].min() / unique_tokens,2)
@@ -130,16 +130,13 @@ class BasicScalingLaw(ScalingLaw):
                 'beta': torch.arange(start=0, end=2, step=0.5)
             }
         loss, theta, pq = minimize_scl_loss(
-            init_params=None,  # ignored because grid_specs is provided
-            grid_specs=grid,
-            torch_loss    = cls.torch_loss,
-            inp_torch     = torch.tensor(np.c_[N, D, y], dtype=torch.float32),
-            loss_kwargs   = {"tie": args.tie},
+            init_params     = None,  # ignored because grid_specs is provided
+            grid_specs      = grid,
+            torch_loss      = cls.torch_loss,
+            inp_torch       = torch.tensor(np.c_[N, D, y], dtype=torch.float32),
+            loss_kwargs     = {"tie": args.tie},
         )
 
-        if args.tie:
-            A, B, E, alpha = theta ; beta = alpha
-        else:
-            A, B, E, alpha, beta = theta
-        params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta)
+        params = LawParams(params={"A": np.exp(theta['a']), "B": np.exp(theta['b']), "E": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta']})
+        # params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta)
         return loss, cls(params)
