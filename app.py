@@ -83,8 +83,8 @@ with tab1:
                 help="Select the language for scaling law recommendations",
             )
 
-            total_tokens = st.number_input(
-                "Total Training Tokens (for data constraints)",
+            unique_tokens = st.number_input(
+                "Unique Tokens for data constraints",
                 min_value=0,
                 value=0,
                 format="%d",
@@ -131,8 +131,8 @@ with tab1:
                         if inference_tokens > 0:
                             # Handle data-constrained case for inference
                             if "U" in law_wrapper.extra_args:
-                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
-                                U_value = total_tokens if total_tokens > 0 else 1e15  # Very large U for unlimited case
+                                # Use provided unique_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = unique_tokens if unique_tokens > 0 else 1e15  # Very large U for unlimited case
                                 result = scaling_law.compute_optimal_allocation_inference(
                                     compute_budget=compute_budget,
                                     D_inference=inference_tokens,
@@ -148,8 +148,8 @@ with tab1:
                         else:
                             # Handle data-constrained case for basic allocation
                             if "U" in law_wrapper.extra_args:
-                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
-                                U_value = total_tokens if total_tokens > 0 else 1e15  # Very large U for unlimited case
+                                # Use provided unique_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = unique_tokens if unique_tokens > 0 else 1e15  # Very large U for unlimited case
                                 result = scaling_law.compute_optimal_allocation(
                                     C=compute_budget, U=U_value
                                 )
@@ -191,6 +191,7 @@ with tab1:
                 # Generate range of compute budgets for optimal scaling curves
                 compute_range = np.logspace(15, 25, 100)
                 
+                best_result = {}
                 for law_name in selected_laws:
                     law_wrapper = ALL_SCALING_LAWS[law_name]
                     scaling_law = law_wrapper.scaling_law
@@ -199,14 +200,21 @@ with tab1:
                     N_optimal = []
                     D_optimal = []
                     
+                    last_loss = None
                     for C in compute_range:
                         try:
                             if "U" in law_wrapper.extra_args:
-                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
-                                U_value = total_tokens if total_tokens > 0 else 1e15
+                                # Use provided unique_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = unique_tokens if unique_tokens > 0 else 1e15
                                 result = scaling_law.compute_optimal_allocation(C=C, U=U_value)
                             else:
                                 result = scaling_law.compute_optimal_allocation(C=C)
+                            # Stop if loss stops improving to avoid flat lines
+                            if result['loss'] == last_loss:
+                                best_result[law_name] = result
+                                break
+                            last_loss = result['loss']
+
                             N_optimal.append(result['model'])
                             D_optimal.append(result['data'])
                         except Exception:
@@ -215,7 +223,7 @@ with tab1:
                     
                     # Add suffix to indicate data constraint status
                     if "U" in law_wrapper.extra_args:
-                        label_suffix = f" (U={total_tokens if total_tokens > 0 else '∞'})"
+                        label_suffix = f" (U={unique_tokens if unique_tokens > 0 else '∞'})"
                     else:
                         label_suffix = ""
                     
@@ -234,15 +242,18 @@ with tab1:
                     for law_name in selected_laws:
                         law_wrapper = ALL_SCALING_LAWS[law_name]
                         scaling_law = law_wrapper.scaling_law
-                            
+
                         try:
-                            if "U" in law_wrapper.extra_args:
-                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
-                                U_value = total_tokens if total_tokens > 0 else 1e15
-                                result = scaling_law.compute_optimal_allocation(C=compute_budget, U=U_value)
+                            if (best_result.get(law_name)) and (best_result[law_name]['flops'] <= compute_budget):
+                                result = best_result[law_name]
                             else:
-                                result = scaling_law.compute_optimal_allocation(C=compute_budget)
-                            ax1.scatter(result['data'], result['model'], 
+                                if "U" in law_wrapper.extra_args:
+                                    # Use provided unique_tokens if > 0, otherwise assume unlimited unique data
+                                    U_value = unique_tokens if unique_tokens > 0 else 1e15
+                                    result = scaling_law.compute_optimal_allocation(C=compute_budget, U=U_value)
+                                else:
+                                    result = scaling_law.compute_optimal_allocation(C=compute_budget)
+                            ax1.scatter(result['data'], result['model'],
                                       s=100, alpha=0.8, zorder=5)
                         except Exception:
                             pass
@@ -259,8 +270,8 @@ with tab1:
                         for N in N_isoloss:
                             try:
                                 if "U" in law_wrapper.extra_args:
-                                    # Use provided total_tokens if > 0, otherwise assume unlimited unique data
-                                    U_value = total_tokens if total_tokens > 0 else 1e15
+                                    # Use provided unique_tokens if > 0, otherwise assume unlimited unique data
+                                    U_value = unique_tokens if unique_tokens > 0 else 1e15
                                     D = scaling_law.N_to_D(N, target_loss, U=U_value)
                                 else:
                                     D = scaling_law.N_to_D(N, target_loss)
@@ -270,7 +281,7 @@ with tab1:
                         
                         # Add suffix to indicate data constraint status
                         if "U" in law_wrapper.extra_args:
-                            label_suffix = f" (U={total_tokens if total_tokens > 0 else '∞'})"
+                            label_suffix = f" (U={unique_tokens if unique_tokens > 0 else '∞'})"
                         else:
                             label_suffix = ""
                         
@@ -296,14 +307,19 @@ with tab1:
                     scaling_law = law_wrapper.scaling_law
 
                     ratios = []
+                    last_loss = None
                     for C in compute_budgets:
                         try:
                             if "U" in law_wrapper.extra_args:
-                                # Use provided total_tokens if > 0, otherwise assume unlimited unique data
-                                U_value = total_tokens if total_tokens > 0 else 1e15
+                                # Use provided unique_tokens if > 0, otherwise assume unlimited unique data
+                                U_value = unique_tokens if unique_tokens > 0 else 1e15
                                 result = scaling_law.compute_optimal_allocation(C=C, U=U_value)
                             else:
                                 result = scaling_law.compute_optimal_allocation(C=C)
+                            if result['loss'] == last_loss:
+                                ratios.extend([np.nan] * (len(compute_budgets) - len(ratios)))
+                                break
+                            last_loss = result['loss']
                             ratio = result["data"] / result["model"]
                             ratios.append(ratio)
                         except Exception:
@@ -311,7 +327,7 @@ with tab1:
 
                     # Add suffix to indicate data constraint status
                     if "U" in law_wrapper.extra_args:
-                        label_suffix = f" (U={total_tokens if total_tokens > 0 else '∞'})"
+                        label_suffix = f" (U={unique_tokens if unique_tokens > 0 else '∞'})"
                     else:
                         label_suffix = ""
 
