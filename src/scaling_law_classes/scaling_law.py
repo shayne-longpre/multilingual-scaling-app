@@ -68,7 +68,7 @@ class ScalingLaw(ABC):
 
     @classmethod
     @abstractmethod
-    def fit(cls, *args, **kw): ...
+    def fit(cls, data, *args, **kw): ...
 
     def D_to_N(self, D):
         return (D * self.G) ** (self.beta / self.alpha) * self.G

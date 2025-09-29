@@ -1,5 +1,5 @@
 import sys
-
+import math
 import numpy as np
 import torch
 from scipy.optimize import brentq
@@ -7,7 +7,7 @@ from scipy.optimize import brentq
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams
+from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams, BasicScalingLaw
 
 
 class DataConstrainedScalingLaw(ScalingLaw):
@@ -102,7 +102,7 @@ class DataConstrainedScalingLaw(ScalingLaw):
         return super().compute_optimal_allocation(C, U=U, **kw)
 
     @classmethod
-    def fit(cls, *args, **kw):
+    def fit(cls, data, *args, **kw):
         unique_tokens = data["U"].max()
         pre_epoch_sample = data[data["D"] <= unique_tokens]
 

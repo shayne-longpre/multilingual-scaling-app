@@ -1,5 +1,5 @@
 import sys
-
+import math
 import numpy as np
 import torch
 
@@ -116,10 +116,10 @@ class BasicScalingLaw(ScalingLaw):
         x_nd = data[["N", "D"]].values.astype(float)
         y    = data["Loss"].values.astype(float)
 
-        unique_tokens = data["U"].iloc[0]
-        min_epochs = round(data["D"].min() / unique_tokens,2)
-        max_epochs = round(data["D"].max() / unique_tokens,2)
-        print(f"Data points: {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
+        # unique_tokens = data["U"].iloc[0]
+        # min_epochs = round(data["D"].min() / unique_tokens,2)
+        # max_epochs = round(data["D"].max() / unique_tokens,2)
+        # print(f"Data points: {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
 
         # initial guess in log‑space: logA logB logE alpha (beta)
         init = [0, 0, math.log(y.min()), 0.3] + ([] if tie else [0.3])
