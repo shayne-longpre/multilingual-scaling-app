@@ -7,7 +7,7 @@ from scipy.optimize import brentq
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams, BasicScalingLaw
+from src.scaling_law_classes.scaling_law import ScalingLaw, BasicScalingLaw
 
 
 class DataConstrainedScalingLaw(ScalingLaw):
@@ -37,9 +37,6 @@ class DataConstrainedScalingLaw(ScalingLaw):
             + (p.B / (data_denom**p.beta))
         )
         return loss
-
-    def D_to_N(self, D):
-        return (D * self.G) ** (self.params.beta / self.params.alpha) * self.G
 
     def DL_to_N(self, D, L):
         return 0.0  # TODO
@@ -104,8 +101,7 @@ class DataConstrainedScalingLaw(ScalingLaw):
     def compute_optimal_allocation(self, C, *, U, **kw):
         return super().compute_optimal_allocation(C, U=U, **kw)
 
-    @classmethod
-    def fit(cls, data, *args, **kw):
+    def fit(self, data, *args, **kw):
         unique_tokens = data["U"].max()
         pre_epoch_sample = data[data["D"] <= unique_tokens]
 
@@ -151,5 +147,5 @@ class DataConstrainedScalingLaw(ScalingLaw):
         )
 
         # A,B,E,alpha,beta,rd,rn = theta
-        params = LawParams(params={"A": np.exp(theta['a']), "B": np.exp(theta['b']), "E": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta'], "rd_star": theta['rd'], "rn_star": theta['rn']})
+        params = {"A": np.exp(theta['a']), "B": np.exp(theta['b']), "E": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta'], "rd_star": theta['rd'], "rn_star": theta['rn']}
         return loss, cls(params)

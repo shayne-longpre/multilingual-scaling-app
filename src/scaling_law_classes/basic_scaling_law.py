@@ -137,6 +137,5 @@ class BasicScalingLaw(ScalingLaw):
             loss_kwargs     = {"tie": args.tie},
         )
 
-        params = LawParams(params={"A": np.exp(theta['a']), "B": np.exp(theta['b']), "E": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta']})
-        # params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta)
+        params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta)
         return loss, cls(params)

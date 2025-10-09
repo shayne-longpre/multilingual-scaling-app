@@ -10,12 +10,12 @@ from sklearn.metrics import r2_score
 
 @dataclass(frozen=True)
 class LawParams:
-    # A: float
-    # B: float
-    # irreducible: float
-    # alpha: float
-    # beta: float
-    # extras: Mapping[str, float] = field(default_factory=dict)
+    A: float
+    B: float
+    irreducible: float
+    alpha: float
+    beta: float
+    extras: Mapping[str, float] = field(default_factory=dict)
     params: Mapping[str, float]
 
 
@@ -39,14 +39,8 @@ class ScalingLaw(ABC):
     default_vars: Mapping[str, float] = {}
     FLOPS_COEFF: float = 6.0  # override if k ≠ 6 for your law
 
-    def __init__(self, params: LawParams):
+    def __init__(self, params: LawParams, inps):
         self.params = params
-        try:
-            self.G = ((params.alpha * params.A) / (params.beta * params.B)) ** (
-                1 / (params.alpha + params.beta)
-            )
-        except Exception:
-            self.G = None
 
     def set_flops_coeff(self, flops_coeff):
         self.FLOPS_COEFF = flops_coeff
@@ -59,20 +53,20 @@ class ScalingLaw(ABC):
     @abstractmethod
     def loss_expr(self, **vars: float): ...
 
-    @staticmethod
     @abstractmethod
-    def torch_loss(inp: torch.Tensor, theta: torch.Tensor, **kw): ...
+    def torch_loss(self, inp: torch.Tensor, theta: torch.Tensor, **kw): ...
 
-    @staticmethod
     @abstractmethod
-    def numpy_loss(X: np.ndarray, *theta, **kw) -> np.ndarray: ...
+    def numpy_loss(self, inp: np.ndarray, *theta, **kw) -> np.ndarray: ...
 
-    @classmethod
     @abstractmethod
-    def fit(cls, data, *args, **kw): ...
+    def fit(self, data, *args, **kw): ...
 
     def D_to_N(self, D):
-        return (D * self.G) ** (self.beta / self.alpha) * self.G
+        G = ((self.params['alpha'] * self.params['A']) / (self.params['beta'] * self.params['B'])) ** (
+                1 / (self.params['alpha'] + self.params['beta'])
+            )
+        return (D * G) ** (self.params['beta'] / self.params['alpha']) * G
 
     # ---------------- general iso‑loss utilities -------------------------
     # Each subclass *must* supply an analytic or numeric implementation.
