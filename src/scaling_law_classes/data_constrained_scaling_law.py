@@ -1,5 +1,6 @@
 import sys
 import math
+from typing import Callable, Dict, Iterable, List
 import numpy as np
 import torch
 from scipy.optimize import brentq
@@ -13,6 +14,21 @@ from src.scaling_law_classes.scaling_law import ScalingLaw, BasicScalingLaw
 class DataConstrainedScalingLaw(ScalingLaw):
     variables = ("N", "D", "U")
     default_vars = {"N": 1.0, "D": 1.0, "U": 1.0}
+
+    def form_exp_parts(self, params_list: List[float], **inp: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
+        a, b, e, alpha, beta, ep_star, n_star = params_list
+        # UN, U, RD, RN = inp[:, 0], inp[:, 1], inp[:, 2], inp[:, 3]
+        UN = inp["UN"]
+        U = inp["U"]
+        RD = inp["RD"]
+        RN = inp["RN"]
+        tm = UN + UN * n_star * (1 - torch.exp(-RN / n_star))
+        td = U + U * ep_star * (1 - torch.exp(-RD / ep_star))
+        return [
+            a - alpha * torch.log(tm),
+            b - beta * torch.log(td),
+            e.expand(inp["Loss"].shape[0]),
+        ]
 
     # --- NumPy loss ------------------------------------------------------
     def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
@@ -69,29 +85,56 @@ class DataConstrainedScalingLaw(ScalingLaw):
             raise ValueError("Unable to bracket iso‑loss root for given N.") from e
 
     @staticmethod
-    def torch_loss(inp: torch.Tensor, theta: torch.Tensor):
-        a, b, e, alpha, beta, ep_star, n_star = theta
-        tm = inp[:, 0] + inp[:, 0] * n_star * (1 - torch.exp(-inp[:, 3] / n_star))
-        td = inp[:, 1] + inp[:, 1] * ep_star * (1 - torch.exp(-inp[:, 2] / ep_star))
-        pre = torch.stack(
-            [
-                a - alpha * torch.log(tm),
-                b - beta * torch.log(td),
-                e.expand(inp.shape[0]),
-            ]
-        )
+    def torch_loss(
+        form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]], 
+        params_list: Iterable[float], 
+        inp: Dict[str, torch.Tensor], 
+        tie_indices: List[List[int]] = [],
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3}
+    ) -> torch.Tensor:
+        loss_func = loss_kwargs.get('loss_func', 'log_huber')
+        delta = loss_kwargs.get('delta', 1e-3)
+        for tie_params in tie_indices:
+            tie_source = params_list[tie_params[0]]
+            for i in tie_params[1:]:
+                params_list[i] = tie_source
+        pre = torch.stack(form_exp_parts(params_list, **inp))
         post = torch.logsumexp(pre, dim=0)
-        return torch.nn.functional.huber_loss(
-            post, torch.log(inp[:, 4]), delta=1e-3, reduction="none"
-        ).sum()
+
+        if loss_func == 'log_huber':
+            return torch.nn.functional.huber_loss(
+                post, torch.log(inp["Loss"]), delta=delta, reduction="none"
+            ).sum()
+        else:
+            raise NotImplementedError(f"Loss function {loss_func} not implemented.")
 
     @staticmethod
-    def numpy_loss(inp: np.ndarray, params: np.ndarray) -> np.ndarray:
-        a, b, e, alpha, beta, ep_star, n_star = params
-        UN, U, RD, RN = inp[:, 0], inp[:, 1], inp[:, 2], inp[:, 3]
-        tm = UN + UN * n_star * (1 - np.exp(-RN / n_star))
-        td = U + U * ep_star * (1 - np.exp(-RD / ep_star))
-        return np.exp(e) + np.exp(a) / tm**alpha + np.exp(b) / td**beta
+    def numpy_loss(
+        form_exp_parts: Callable[[List[float], Dict[str, np.ndarray]], List[np.ndarray]],
+        params_list: List[float], 
+        inp: Dict[str, np.ndarray], 
+        tie_indices: List[List[int]] = [],
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
+    ) -> np.ndarray:
+        loss_func = loss_kwargs.get('loss_func', 'log_huber')
+        delta = loss_kwargs.get('delta', 1e-3)
+
+        for tie_params in tie_indices:
+            tie_source = params_list[tie_params[0]]
+            for i in tie_params[1:]:
+                params_list[i] = tie_source
+        pre = np.stack(form_exp_parts(params_list, **inp))
+        post = np.logaddexp.reduce(pre, axis=0)
+
+        if loss_func == 'log_huber':
+            # Apply Huber loss formula
+            return np.sum(
+                np.where(
+                    np.abs(np.log(inp["Loss"]) - post) <= delta,
+                    0.5 * (np.log(inp["Loss"]) - post)**2, 
+                    delta * (np.abs(np.log(inp["Loss"]) - post) - 0.5 * delta)))
+        else:
+            raise NotImplementedError(f"Loss function {loss_func} not implemented.")
 
     def iso_loss_function(self, target_loss: float, **other_vars):
         if "U" not in other_vars:
@@ -101,7 +144,8 @@ class DataConstrainedScalingLaw(ScalingLaw):
     def compute_optimal_allocation(self, C, *, U, **kw):
         return super().compute_optimal_allocation(C, U=U, **kw)
 
-    def fit(self, data, *args, **kw):
+    @classmethod
+    def fit(cls, data, *args, **kw):
         unique_tokens = data["U"].max()
         pre_epoch_sample = data[data["D"] <= unique_tokens]
 
@@ -138,7 +182,7 @@ class DataConstrainedScalingLaw(ScalingLaw):
         # print(torch_inputs)
         torch_inputs.require_grad = True
         init = [a0, b0, e0, alpha, beta, 1, 1]      # 7-vector
-        loss, theta = minimize_scl_loss(
+        loss, theta, _pq = minimize_scl_loss(
             init_params   = init,
             grid_specs    = grid_vals,              # grid over the LAST 2 parameters
             params_to_fix = [0, 1, 2, 3, 4],        # first five are frozen
@@ -148,4 +192,4 @@ class DataConstrainedScalingLaw(ScalingLaw):
 
         # A,B,E,alpha,beta,rd,rn = theta
         params = {"A": np.exp(theta['a']), "B": np.exp(theta['b']), "E": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta'], "rd_star": theta['rd'], "rn_star": theta['rn']}
-        return loss, cls(params)
+        return loss, params

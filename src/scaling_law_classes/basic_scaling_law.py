@@ -6,7 +6,7 @@ import torch
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams
+from src.scaling_law_classes.scaling_law import ScalingLaw
 
 
 class BasicScalingLaw(ScalingLaw):
@@ -16,7 +16,7 @@ class BasicScalingLaw(ScalingLaw):
     # --- NumPy loss ------------------------------------------------------
     def loss_expr(self, *, N: float, D: float, **kwargs):
         p = self.params
-        return p.irreducible + p.A / N**p.alpha + p.B / D**p.beta
+        return p['irreducible'] + p['A'] / N**p['alpha'] + p['B'] / D**p['beta']
 
     # --- Torch loss (same as before) ------------------------------------
     @staticmethod
@@ -52,15 +52,15 @@ class BasicScalingLaw(ScalingLaw):
     # --- Analytic N → D on iso‑loss ------------------------------------
     def N_to_D(self, N: float, target_loss: float, **other_vars) -> float:
         p = self.params
-        L_eff = target_loss - p.irreducible
+        L_eff = target_loss - p['irreducible']
         if L_eff <= 0:
             raise ValueError("target_loss must exceed irreducible loss")
-        denom = L_eff - p.A / N**p.alpha
+        denom = L_eff - p['A'] / N**p['alpha']
         if denom <= 0:
             raise ValueError(
                 "No finite D can satisfy the loss at this N (denominator ≤ 0)"
             )
-        D = (p.B / denom) ** (1.0 / p.beta)
+        D = (p['B'] / denom) ** (1.0 / p['beta'])
         return D
 
     def DL_to_N(self, D, L):
@@ -70,22 +70,22 @@ class BasicScalingLaw(ScalingLaw):
         This is the regular Chinchilla equation solved for N.
         """
         p = self.params
-        L_eff = L - p.irreducible
+        L_eff = L - p['irreducible']
 
         if L_eff <= 0:
             raise ValueError(
-                f"Target loss {L} must exceed irreducible loss {p.irreducible}"
+                f"Target loss {L} must exceed irreducible loss {p['irreducible']}"
             )
 
-        denominator = L_eff - p.B / (D**p.beta)
+        denominator = L_eff - p['B'] / (D**p['beta'])
 
         if denominator <= 0:
             raise ValueError(
                 f"Cannot achieve loss {L} with {D} tokens - need more data"
             )
 
-        partial_result = p.A / denominator
-        return partial_result ** (1 / p.alpha)
+        partial_result = p['A'] / denominator
+        return partial_result ** (1 / p['alpha'])
 
     def compute_optimal_train_tokens(self, x, T, L):
         """
@@ -101,13 +101,13 @@ class BasicScalingLaw(ScalingLaw):
         """
         p = self.params
 
-        coeff_1 = (p.beta * p.B) / p.alpha + p.B
-        coeff_2 = (T * p.beta * p.B) / (3 * p.alpha)
-        loss_diff = p.irreducible - L
+        coeff_1 = (p['beta'] * p['B']) / p['alpha'] + p['B']
+        coeff_2 = (T * p['beta'] * p['B']) / (3 * p['alpha'])
+        loss_diff = p['irreducible'] - L
 
         return (
-            coeff_1 * x ** (-1 * p.beta)
-            + coeff_2 * x ** ((-1 * p.beta) - 1)
+            coeff_1 * x ** (-1 * p['beta'])
+            + coeff_2 * x ** ((-1 * p['beta']) - 1)
             + loss_diff
         )
 
@@ -116,11 +116,6 @@ class BasicScalingLaw(ScalingLaw):
         N = data["N"].values.astype(float)
         D = data["D"].values.astype(float)
         y = data["Loss"].values.astype(float)
-
-        # unique_tokens = data["U"].iloc[0]
-        # min_epochs = round(data["D"].min() / unique_tokens,2)
-        # max_epochs = round(data["D"].max() / unique_tokens,2)
-        # print(f"Data points: {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
 
         grid = {
                 'a': torch.arange(start=0, end=25, step=5),
@@ -137,5 +132,5 @@ class BasicScalingLaw(ScalingLaw):
             loss_kwargs     = {"tie": args.tie},
         )
 
-        params = LawParams(A=np.exp(A), B=np.exp(B), irreducible=np.exp(E), alpha=alpha, beta=beta)
-        return loss, cls(params)
+        params = {"A": np.exp(theta['a']), "B": np.exp(theta['b']), "irreducible": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta']}
+        return loss, params

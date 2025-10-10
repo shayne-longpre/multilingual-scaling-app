@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, List, Mapping, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -8,15 +8,15 @@ from scipy.optimize import brentq, minimize_scalar, newton
 from sklearn.metrics import r2_score
 
 
-@dataclass(frozen=True)
-class LawParams:
-    A: float
-    B: float
-    irreducible: float
-    alpha: float
-    beta: float
-    extras: Mapping[str, float] = field(default_factory=dict)
-    params: Mapping[str, float]
+# @dataclass(frozen=True)
+# class LawParams:
+#     A: float
+#     B: float
+#     irreducible: float
+#     alpha: float
+#     beta: float
+#     extras: Mapping[str, float] = field(default_factory=dict)
+#     params: Mapping[str, float]
 
 
 class ScalingLaw(ABC):
@@ -39,7 +39,7 @@ class ScalingLaw(ABC):
     default_vars: Mapping[str, float] = {}
     FLOPS_COEFF: float = 6.0  # override if k ≠ 6 for your law
 
-    def __init__(self, params: LawParams, inps):
+    def __init__(self, params: Dict[str, float], inps):
         self.params = params
 
     def set_flops_coeff(self, flops_coeff):
@@ -54,13 +54,13 @@ class ScalingLaw(ABC):
     def loss_expr(self, **vars: float): ...
 
     @abstractmethod
-    def torch_loss(self, inp: torch.Tensor, theta: torch.Tensor, **kw): ...
+    def torch_loss(from_exp_parts: Callable, params_list: Iterable[float], inp: torch.Tensor, loss_kwargs: Dict, **kw): ...
 
     @abstractmethod
-    def numpy_loss(self, inp: np.ndarray, *theta, **kw) -> np.ndarray: ...
+    def numpy_loss(from_exp_parts: Callable, params_list: Iterable[float], inp: np.ndarray,  loss_kwargs: Dict, **kw) -> np.ndarray: ...
 
     @abstractmethod
-    def fit(self, data, *args, **kw): ...
+    def fit(cls, data, *args, **kw): ...
 
     def D_to_N(self, D):
         G = ((self.params['alpha'] * self.params['A']) / (self.params['beta'] * self.params['B'])) ** (

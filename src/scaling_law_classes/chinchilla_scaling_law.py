@@ -1,7 +1,7 @@
 import sys
 import heapq
 from functools import partial
-from typing import Any, NamedTuple, Dict, Callable, List, Tuple
+from typing import Any, Iterable, NamedTuple, Dict, Callable, List, Tuple
 # import numpy as np
 import autograd.numpy as np
 from autograd.scipy.stats import norm
@@ -46,6 +46,13 @@ class ChinchillaScalingLaw(ScalingLaw):
             logA - alpha * torch.log(N),
             logB - beta * torch.log(D),
             logE.expand(D.shape[0])
+        ]
+    def form_exp_parts_numpy(self, params_list: List[float], N, D):
+        logA, logB, logE, alpha, beta = params_list
+        return [
+            logA - alpha * np.log(N),
+            logB - beta * np.log(D),
+            logE * np.ones_like(D)
         ]
 
     # # --- NumPy loss ------------------------------------------------------
@@ -115,14 +122,11 @@ class ChinchillaScalingLaw(ScalingLaw):
 
     @staticmethod
     def torch_loss(
-        # self,
-        # params: Dict[str, float], 
         form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]], 
-        params_list: List[float] | Tuple[float], 
+        params_list: Iterable[float], 
         inp: Dict[str, torch.Tensor], 
         tie_indices: List[List[int]] = [],
-        loss_func: str = 'log_huber', 
-        delta: float = 1e-3
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
     ) -> torch.Tensor:
         for tie_params in tie_indices:
             tie_source = params_list[tie_params[0]]
@@ -130,14 +134,14 @@ class ChinchillaScalingLaw(ScalingLaw):
                 params_list[i] = tie_source
         pre = torch.stack(form_exp_parts(params_list, **inp))
         post = torch.logsumexp(pre, dim=0) # log scale
-
+        loss_func = loss_kwargs.get('loss_func', 'log_huber')
         if loss_func == 'log_huber':
             return torch.nn.functional.huber_loss(
-                post, torch.log(inp["Loss"]), delta=delta
+                post, torch.log(inp["Loss"]), delta=loss_kwargs.get('delta', 1e-3)
             ).sum()
         elif loss_func == 'huber':
             return torch.nn.functional.huber_loss(
-                torch.exp(post), inp["Loss"], delta=delta
+                torch.exp(post), inp["Loss"], delta=loss_kwargs.get('delta', 1e-3)
             ).sum()
         # elif loss_func == 'scaled_log_huber': # NOT WORKING YET
         #     return torch.nn.functional.huber_loss(
@@ -154,28 +158,34 @@ class ChinchillaScalingLaw(ScalingLaw):
 
     @staticmethod
     def numpy_loss(
-        form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]],
+        form_exp_parts: Callable[[List[float], Dict[str, np.ndarray]], List[np.ndarray]],
         params_list: List[float], 
-        inp: Dict[str, torch.Tensor], 
-        loss_func: str = 'log_huber', 
+        inp: Dict[str, np.ndarray], 
         tie_indices: List[List[int]] = [],
-        delta: float = 1e-3
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
     ) -> np.ndarray:
         for tie_params in tie_indices:
             tie_source = params_list[tie_params[0]]
             for i in tie_params[1:]:
                 params_list[i] = tie_source
-        pre = torch.stack(form_exp_parts(params_list, **inp))
-        post = torch.logsumexp(pre, dim=0) # log scale
+        pre = np.stack(form_exp_parts(params_list, **inp))
+        post = np.logaddexp.reduce(pre, axis=0) # log scale
+        loss_func = loss_kwargs.get('loss_func', 'log_huber')
+        delta = loss_kwargs.get('delta', 1e-3)
 
         if loss_func == 'log_huber':
-            return torch.nn.functional.huber_loss(
-                post, np.log(inp["Loss"]), delta=delta
-            ).sum()
+            # Apply Huber loss formula
+            return np.sum(
+                np.where(
+                    np.abs(np.log(inp["Loss"]) - post) <= delta,
+                    0.5 * (np.log(inp["Loss"]) - post)**2, 
+                    delta * (np.abs(np.log(inp["Loss"]) - post) - 0.5 * delta)))
         elif loss_func == 'huber':
-            return torch.nn.functional.huber_loss(
-                np.exp(post), inp["Loss"], delta=delta
-            ).sum()
+            return np.sum(
+                np.where(
+                    np.abs(inp["Loss"] - np.exp(post)) <= delta,
+                    0.5 * (inp["Loss"] - np.exp(post))**2, 
+                    delta * (np.abs(inp["Loss"] - np.exp(post)) - 0.5 * delta)))
         # elif loss_func == 'scaled_log_huber': # NOT WORKING YET
         #     return torch.nn.functional.huber_loss(
         #         post, torch.log(inp[:, 2]), delta=delta
@@ -216,7 +226,7 @@ class ChinchillaScalingLaw(ScalingLaw):
             torch_loss      = cls.torch_loss,
             form_exp_parts  = cls.form_exp_parts,
             inp_torch       = torch.tensor(np.c_[N, D, L], dtype=torch.float32),
-            tie_groups      = args.get('tie', []),
+            loss_kwargs     = {"tie_groups": args.get('tie', []), "delta": 1e-3, "loss_func": "log_huber"},
             param_names     = cls.params_names,
 
         )
@@ -227,7 +237,7 @@ class ChinchillaScalingLaw(ScalingLaw):
                 fit_params[k[3:]] = np.exp(theta[k])
             else:
                 fit_params[k] = theta[k]
-        return loss
+        return loss, fit_params
 
 @staticmethod
 def minimize_scl_loss(
@@ -236,7 +246,6 @@ def minimize_scl_loss(
     torch_loss: Callable[[Callable, torch.Tensor, Dict, str, bool, float], torch.Tensor],
     form_exp_parts: Callable[[Dict, torch.Tensor], List[torch.Tensor]],
     inp_torch: Dict[str, torch.Tensor],
-    tie_groups: List[List[str]] = [],
     param_names: List[str] = [],
     loss_kwargs: Dict[str, Any] = None,
     method: str='BFGS',
@@ -263,12 +272,12 @@ def minimize_scl_loss(
     pq = []
     all_params_sets = []
     i = 0
-    tie_indices = [
+    loss_kwargs['tie_indices'] = [
         [param_names.index(p) 
             if p in param_names else 
             param_names.index(p[3:]) 
             for p in tie_group]  # logA → A
-        for tie_group in tie_groups
+        for tie_group in loss_kwargs.get('tie_groups', [])
     ]
 
     grid = torch.meshgrid(
@@ -279,7 +288,7 @@ def minimize_scl_loss(
     if keep_best_k_from_init_grid > 0:
         init_pq = []
         for init_params in grid:
-            init_loss = torch_loss(init_params, inp_torch, loss_kwargs=loss_kwargs)
+            init_loss = torch_loss(form_exp_parts, init_params, inp_torch, loss_kwargs=loss_kwargs)
             if len(init_pq) < keep_best_k_from_init_grid:
                 heapq.heappush(init_pq, PQItem(init_loss, init_params))
             elif init_loss < init_pq[0].loss:
@@ -290,10 +299,10 @@ def minimize_scl_loss(
     for init_params in grid:
         if method == 'grid':
             params = init_params
-            loss = torch_loss(init_params, inp_torch, loss_func=loss_kwargs.get('loss_func', 'log_huber'), tie_indices=tie_indices, delta=loss_kwargs.get('delta', 1e-3))
+            loss = torch_loss(form_exp_parts,init_params, inp_torch, loss_kwargs=loss_kwargs)
             success = True
         else:
-            obj = partial(torch_loss, inp=inp_torch, form_exp_parts=form_exp_parts, loss_func=loss_kwargs.get('loss_func', 'log_huber'), tie_indices=tie_indices, delta=loss_kwargs.get('delta', 1e-3))
+            obj = partial(torch_loss, form_exp_parts=form_exp_parts, inp=inp_torch, loss_kwargs=loss_kwargs)
             if method == 'nonlinear_least_squares':
                 result = least_squares(obj, init_params)
             else:
@@ -327,25 +336,25 @@ def minimize_scl_loss(
 
     largest = heapq.nlargest(100, pq)
 
-    if best_params is not None:
-        best_params_untransformed = list(untransform_params(best_params))
-        A, B, E, alpha, beta = best_params_untransformed
-        print(f"Best fit parameters: A={A}, B={B}, E={E}, alpha={alpha}, beta={beta}")
-        print(f"Best loss: {best_loss}")
+    # if best_params is not None:
+    #     best_params_untransformed = list(untransform_params(best_params))
+    #     A, B, E, alpha, beta = best_params_untransformed
+    #     print(f"Best fit parameters: A={A}, B={B}, E={E}, alpha={alpha}, beta={beta}")
+    #     print(f"Best loss: {best_loss}")
 
-        param_list = np.array(param_list)
-        cov_matrix = np.cov(np.transpose(param_list))
-        param_list_untransformed = untransform_params(param_list)
-        cov_matrix_untransformed = np.cov(np.transpose(param_list_untransformed))
-        standard_errors = np.sqrt(np.diag(cov_matrix[:5, :5]))
-        standard_errors_untransformed = np.sqrt(np.diag(cov_matrix_untransformed[:5, :5]))
+    #     param_list = np.array(param_list)
+    #     cov_matrix = np.cov(np.transpose(param_list))
+    #     param_list_untransformed = untransform_params(param_list)
+    #     cov_matrix_untransformed = np.cov(np.transpose(param_list_untransformed))
+    #     standard_errors = np.sqrt(np.diag(cov_matrix[:5, :5]))
+    #     standard_errors_untransformed = np.sqrt(np.diag(cov_matrix_untransformed[:5, :5]))
 
-        parameter_labels = ["A", "B", "E", "alpha", "beta"]
-        print("Parameter estimates and their standard errors")
-        for index, label in enumerate(parameter_labels):
-            print("%s: %.5f (%.5f)" % (label, best_params_untransformed[index], standard_errors_untransformed[index]))
+    #     parameter_labels = ["A", "B", "E", "alpha", "beta"]
+    #     print("Parameter estimates and their standard errors")
+    #     for index, label in enumerate(parameter_labels):
+    #         print("%s: %.5f (%.5f)" % (label, best_params_untransformed[index], standard_errors_untransformed[index]))
 
-    else:
-        print("Optimization failed to converge.")
+    # else:
+    #     print("Optimization failed to converge.")
 
     return best_loss, best_params, pq

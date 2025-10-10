@@ -5,6 +5,7 @@ from typing import Any, NamedTuple, Dict, Callable, List, Tuple
 # import numpy as np
 import autograd.numpy as np
 from autograd.scipy.stats import norm
+from sympy import symbols, lambdify, parse_expr
 import torch
 from torchmin import minimize, least_squares
 # from scipy.optimize import brentq, curve_fit, minimize, least_squares, OptimizeWarning
@@ -12,55 +13,7 @@ from torchmin import minimize, least_squares
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams
-
-
-
-def huber_logpdf(x, delta=1e-3, loc=0, scale=1):
-    x = (x-loc)/scale
-    cond = np.abs(x) <= delta
-    loss = np.where(cond, 0.5 * x**2, delta * (np.abs(x) - 0.5 * delta))
-    huber_normalizing_factor = np.sqrt(2*np.pi) * (1 - 2*norm.sf(delta)) + 2 * np.exp(-0.5*delta**2)/delta
-    return -loss - np.log(huber_normalizing_factor) - np.log(scale)
-
-def huber_pdf(x, delta=1e-3, loc=0, scale=1):
-    return np.exp(huber_logpdf(x, delta=delta, loc=loc, scale=scale))
-
-# Define the objective function to be minimized
-def scaled_log_huber_objective(predictions, losses, sigma=1e-1, delta=1e-3):
-    return -np.sum(huber_logpdf(np.log(losses), loc=np.log(predictions), scale=np.exp(sigma), delta=delta))
-
-def log_huber_loss_objective(predictions, losses, delta=1e-3):
-    # Calculate the difference
-    diff = np.log(losses) - np.log(predictions)
-    # Calculate the condition for Huber loss
-    cond = np.abs(diff) <= delta
-    # Apply Huber loss formula
-    loss = np.where(cond, 0.5 * diff**2, delta * (np.abs(diff) - 0.5 * delta))
-    return np.sum(loss)
-
-def log_mae_objective(predictions, losses):
-    return np.sum(np.abs(np.log(losses) - predictions))
-
-def log_mse_objective(predictions, losses):
-    return np.sum((np.log(losses) - predictions)**2)
-
-def huber_loss_objective(predictions, losses, delta=1e-3):
-    diff = losses - predictions
-    # Calculate the condition for Huber loss
-    cond = np.abs(diff) <= delta
-    # Apply Huber loss formula
-    loss = np.where(cond, 0.5 * diff**2, delta * (np.abs(diff) - 0.5 * delta))
-    return np.sum(loss)
-
-
-# transform parameters back from log space
-def untransform_params(param_array):
-    if len(np.shape(param_array)) == 2:
-        return np.hstack((np.exp(param_array[:, :3]), param_array[:, 3:]))
-    else:
-        return np.hstack((np.exp(param_array[:3]), param_array[3:]))
-
+from src.scaling_law_classes.scaling_law import ScalingLaw
 
 class PQItem(object):
     def __init__(self, loss, params):
@@ -71,14 +24,12 @@ class PQItem(object):
         return self.loss > other.loss # reversed because we want to retain lower loss params
 
 
-
-class ScalingLaw(ScalingLaw):
+class GeneralScalingLaw(ScalingLaw):
     variables = ("N", "D", )
     default_vars = {"N": 1.0, "D": 1.0}
 
     def __init__(self, params: Dict[str, float], form_str=None, params_str=None, vars_str=None):#, variables=None):
         super().__init__(params)
-        from sympy import symbols, lambdify, parse_expr
         self.params = symbols(params_str)
         self.param_dict = {}
         self.param_names = []
@@ -94,20 +45,13 @@ class ScalingLaw(ScalingLaw):
         self.f = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all"), 'numpy')
 
 
-    # Define the log-sum-exp function
-    def form_exp_parts(params: Dict, inps: Dict):
+    def form_exp_parts(self, params_list: List[float], N, D):
+        logA, logB, logE, alpha, beta = params_list
         return [
-            params['a'] - params['alpha'] * torch.log(inps['N']),
-            params['b'] - params['beta'] * torch.log(inps['D']),
-            params['e'].expand(inps['D'].shape[0])
-        ]    
-    # def form_exp_parts(params: Dict, inp: torch.Tensor):
-    #     return [
-    #         params['a'] - params['alpha'] * torch.log(inp[:, 0]),
-    #         params['b'] - params['beta'] * torch.log(inp[:, 1]),
-    #         params['e'].expand(inp.shape[0])
-    #     ]
-    
+            logA - alpha * torch.log(N),
+            logB - beta * torch.log(D),
+            logE.expand(D.shape[0])
+        ]
 
     # --- NumPy loss ------------------------------------------------------
     def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
@@ -247,7 +191,7 @@ class ScalingLaw(ScalingLaw):
             torch_loss      = cls.torch_loss,
             form_exp_parts  = cls.form_exp_parts,
             inp_torch       = torch.tensor(np.c_[N, D, L], dtype=torch.float32),
-            tie_groups      = args.get('tie', []),
+            loss_kwargs     = {"tie_groups": args.get('tie', [])},
             param_names     = cls.params_names,
 
         )
@@ -258,7 +202,7 @@ class ScalingLaw(ScalingLaw):
                 fit_params[k[3:]] = np.exp(theta[k])
             else:
                 fit_params[k] = theta[k]
-        return loss
+        return loss, fit_params
 
         
 @staticmethod
@@ -268,7 +212,7 @@ def minimize_scl_loss(
     torch_loss: Callable[[Callable, torch.Tensor, Dict, str, bool, float], torch.Tensor],
     form_exp_parts: Callable[[Dict, torch.Tensor], List[torch.Tensor]],
     inp_torch: Dict[str, torch.Tensor],
-    tie_indices: List[List[str]] = [],
+    param_names: List[str] = [],
     loss_kwargs: Dict[str, Any] = None,
     method: str='BFGS',
     max_opt_inits: int = -1,  # no max by default
@@ -293,6 +237,15 @@ def minimize_scl_loss(
     pq = []
     param_list = []
     i = 0
+    tie_indices = [
+        [param_names.index(p) 
+            if p in param_names else 
+            param_names.index(p[3:]) 
+            for p in tie_group]  # logA → A
+        for tie_group in loss_kwargs.get('tie_groups', [])
+    ]
+
+
     if init_params:
         assert grid_specs is None, "Cannot provide both init_params and grid_specs"
         grid_specs = [init_params]
@@ -304,8 +257,6 @@ def minimize_scl_loss(
             'alpha': np.arange(0, 2, 0.5),
             'beta': np.arange(0, 2, 0.5)
         }
-    # if tie_alpha_beta:
-    #     grid_specs['beta'] = [0] # dummy value, will be set to alpha later
 
     grid = np.array(np.meshgrid(
         *[grid_specs[key] for key in sorted(grid_specs.keys())]
