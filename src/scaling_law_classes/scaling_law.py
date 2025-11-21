@@ -35,11 +35,11 @@ class ScalingLaw(ABC):
     """
 
     # --- model‑specific metadata -----------------------------------------
-    variables: Sequence[str] = ()
-    default_vars: Mapping[str, float] = {}
+    # variables: Sequence[str] = ()
+    # default_vars: Mapping[str, float] = {}
     FLOPS_COEFF: float = 6.0  # override if k ≠ 6 for your law
 
-    def __init__(self, params: Dict[str, float], inps):
+    def __init__(self, params: Dict[str, float], ):
         self.params = params
 
     def set_flops_coeff(self, flops_coeff):
@@ -89,12 +89,16 @@ class ScalingLaw(ABC):
 
     # ---------------- convenience --------------------------------------
     def loss(self, **vars):
-        merged = {**self.default_vars, **vars}
-        missing = [v for v in self.variables if v not in merged]
-        if missing:
-            raise ValueError(f"Missing vars {missing}")
+        # merged = {**self.default_vars, **vars}
+        # missing = [v for v in self.variables if v not in merged]
+        # if missing:
+        #     raise ValueError(f"Missing vars {missing}")
 
-        result = self.loss_expr(**merged)
+        # result = self.loss_expr(**merged)
+        
+        # Not sure it makes sense to have default N, D etc? 
+        # I think we should force the user to provide everything
+        result = self.loss_expr(**vars)
 
         # Only convert to float if it's a scalar
         if hasattr(result, "__len__") and len(result) > 1:

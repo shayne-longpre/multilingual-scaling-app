@@ -12,7 +12,6 @@ from src.scaling_law_classes.scaling_law import ScalingLaw, BasicScalingLaw
 
 
 class DataConstrainedScalingLaw(ScalingLaw):
-    variables = ("N", "D", "U")
     default_vars = {"N": 1.0, "D": 1.0, "U": 1.0}
 
     def form_exp_parts(self, params_list: List[float], **inp: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
@@ -84,8 +83,9 @@ class DataConstrainedScalingLaw(ScalingLaw):
         except ValueError as e:
             raise ValueError("Unable to bracket iso‑loss root for given N.") from e
 
-    @staticmethod
+    # @staticmethod
     def torch_loss(
+        self,
         form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]], 
         params_list: Iterable[float], 
         inp: Dict[str, torch.Tensor], 
@@ -108,8 +108,9 @@ class DataConstrainedScalingLaw(ScalingLaw):
         else:
             raise NotImplementedError(f"Loss function {loss_func} not implemented.")
 
-    @staticmethod
+    # @staticmethod
     def numpy_loss(
+        self,
         form_exp_parts: Callable[[List[float], Dict[str, np.ndarray]], List[np.ndarray]],
         params_list: List[float], 
         inp: Dict[str, np.ndarray], 

@@ -9,10 +9,13 @@ import torch
 from torchmin import minimize, least_squares
 # from scipy.optimize import brentq, curve_fit, minimize, least_squares, OptimizeWarning
 
+from sympy import symbols, lambdify, parse_expr
+
+
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw, LawParams
+from src.scaling_law_classes.scaling_law import ScalingLaw
 
 
 class PQItem(object):
@@ -25,39 +28,125 @@ class PQItem(object):
 
 
 class ChinchillaScalingLaw(ScalingLaw):
-    variables = ("N", "D")
     params_names = ['A', 'B', 'E', 'alpha', 'beta']
     optim_params_names = ['logA', 'logB', 'logE', 'alpha', 'beta']
     log_params_names = ['A', 'B', 'E']
 
-    def __init__(self, params: Dict[str, float], form_str=None):#, variables=None):
+    # def __init__(self, params: Dict[str, float], form_str=None):#, variables=None):
         
+    #     super().__init__(params)
+    def __init__(
+            self, 
+            params: Dict[str, float], 
+            form_str="N ** alpha / A + D ** beta / B + E", 
+            params_str="A B E alpha beta", 
+            vars_str="N D",
+            form_exp_parts_str=["logA - alpha * logN", "logB - beta * logD", "logE"],
+    ):#, variables=None):
         super().__init__(params)
+
+        param_symbols = symbols(params_str)
+        self.param_names = sorted([p.strip() for p in params_str.split()]) if params_str else []
+        self.param_symbol_dict = {p: param_symbols[i] for i, p in enumerate(params_str.split())}
+        self.params = {p: params[p] for p in self.param_names}
+
+        var_symbols = symbols(vars_str)
+        self.var_names = sorted([v.strip() for v in vars_str.split()]) if vars_str else []
+        self.var_symbol_dict = {v: var_symbols[i] for i, v in enumerate(vars_str.split())} if vars_str else {}
+
+        log_param_symbols = symbols(" ".join(f'log{p}' for p in self.param_names))
+        self.log_params_names = [f'log{p}' for p in self.param_names]
+        self.log_params_symbol_dict = {f'log{p}': log_param_symbols[i] for i, p in enumerate(self.param_names)}
+        self.log_params = {f'log{p}': np.log(params[p]) for p in self.param_names}
+
+        log_var_symbols = symbols(" ".join(f'log{v}' for v in self.var_names))
+        self.log_vars_names = [f'log{v}' for v in self.var_names]
+        self.log_vars_symbol_dict = {f'log{v}': log_var_symbols[i] for i, v in enumerate(self.var_names)}
+
+        # self.form = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all", local_dict={**self.vars_dict, **self.param_dict}), "numpy")
+        self.form = lambdify(
+            self.params + self.vars, 
+            parse_expr(
+                form_str.strip(), 
+                transformations="all", 
+                local_dict={
+                    **self.var_symbol_dict, **self.param_symbol_dict 
+                }), 
+            "numpy"
+        )
         
+        self.form_exp_parts = []
+        # form_exp_params_and_vars = [p for p in self.params + self.vars + self.log_params + self.log_vars if ]
+        for part in form_exp_parts_str:
+            self.form_exp_parts.append(lambdify(
+                self.params + self.vars + self.log_params + self.log_vars, 
+                parse_expr(
+                    part.strip(), 
+                    transformations="all", 
+                    local_dict={
+                        **self.param_symbol_dict, **self.var_symbol_dict, **self.log_vars_symbol_dict, **self.log_params_symbol_dict
+                    }), 
+                "numpy"
+            ))
+
+
     # def form_exp_parts(self, params: Dict, inps: Dict):
     #     return [
     #         params['logA'] - params['alpha'] * torch.log(inps['N']),
     #         params['logB'] - params['beta'] * torch.log(inps['D']),
     #         params['logE'].expand(inps['D'].shape[0])
     #     ]
-    def form_exp_parts(self, params_list: List[float], N, D):
-        logA, logB, logE, alpha, beta = params_list
-        return [
-            logA - alpha * torch.log(N),
-            logB - beta * torch.log(D),
-            logE.expand(D.shape[0])
+
+    # def form_exp_parts(self, params_list: List[float], N, D):
+    def form_exp_parts(self, params_list: Dict[str, float], inps: Dict[str, torch.Tensor]):
+        if self.form_exp_parts is None:
+            return 
+        # logA, logB, logE, alpha, beta = params_list
+        # return [
+        #     logA - alpha * torch.log(N),
+        #     logB - beta * torch.log(D),
+        #     logE.expand(D.shape[0])
+        # ]
+        # for v in self.var_names:
+        #     self.log_var[v] = torch.log(v)
+        log_var_vals = {
+            f"log{v}": torch.log(inps[v]) for v in self.var_names
+        }
+        lse_arr = [
+            self.form_exp_parts[i](
+                **self.params, **inps, **self.log_params, **log_var_vals
+            ) for i in range(len(self.form_exp_parts))
         ]
-    def form_exp_parts_numpy(self, params_list: List[float], N, D):
-        logA, logB, logE, alpha, beta = params_list
-        return [
-            logA - alpha * np.log(N),
-            logB - beta * np.log(D),
-            logE * np.ones_like(D)
+        # TODO expand shape of all tensors to match
+        biggest_i = max(range(len(lse_arr)), key=lambda i: lse_arr[i].numel())
+        return [lse_arr[i].expand_as(lse_arr[biggest_i]) for i in range(len(lse_arr))]
+
+    # def form_exp_parts_numpy(self, params_list: List[float], N, D):
+    def form_exp_parts_numpy(self, params_list: Dict[str, float], inps):
+        if self.form_exp_parts is None:
+            return 
+        # logA, logB, logE, alpha, beta = params_list
+        # return [
+        #     logA - alpha * np.log(N),
+        #     logB - beta * np.log(D),
+        #     logE * np.ones_like(D)
+        # ]
+        log_var_vals = {
+            f"log{v}": torch.log(inps[v]) for v in self.var_names
+        }
+        lse_arr = [
+            self.form_exp_parts[i](
+                **self.params, **inps, **self.log_params, **log_var_vals
+            ) for i in range(len(self.form_exp_parts))
         ]
+        # TODO expand shape of all tensors to match
+        biggest_i = max(range(len(lse_arr)), key=lambda i: lse_arr[i].size())
+        return [np.resize(lse_arr[i], lse_arr[biggest_i].shape) for i in range(len(lse_arr))]
+
 
     # # --- NumPy loss ------------------------------------------------------
-    # def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
-    #     return self.form(**self.params, N=N, D=D)
+    def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
+        return self.form(**self.params, N=N, D=D)
     
     # --- Analytic N → D on iso‑loss ------------------------------------
     def N_to_D(self, N: float, target_loss: float, **other_vars) -> float:
@@ -120,18 +209,20 @@ class ChinchillaScalingLaw(ScalingLaw):
             + loss_diff
         )
 
-    @staticmethod
+    # @staticmethod
     def torch_loss(
+        self,
         form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]], 
-        params_list: Iterable[float], 
+        # params_list: Iterable[float], 
+        params_list: Dict[str,float], 
         inp: Dict[str, torch.Tensor], 
         tie_indices: List[List[int]] = [],
         loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
     ) -> torch.Tensor:
         for tie_params in tie_indices:
             tie_source = params_list[tie_params[0]]
-            for i in tie_params[1:]:
-                params_list[i] = tie_source
+            for p in tie_params[1:]:
+                params_list[p] = tie_source
         pre = torch.stack(form_exp_parts(params_list, **inp))
         post = torch.logsumexp(pre, dim=0) # log scale
         loss_func = loss_kwargs.get('loss_func', 'log_huber')
@@ -156,8 +247,9 @@ class ChinchillaScalingLaw(ScalingLaw):
         else:
             raise NotImplementedError(f"Loss function {loss_func} not implemented.")
 
-    @staticmethod
+    # @staticmethod
     def numpy_loss(
+        self,
         form_exp_parts: Callable[[List[float], Dict[str, np.ndarray]], List[np.ndarray]],
         params_list: List[float], 
         inp: Dict[str, np.ndarray], 
@@ -207,8 +299,8 @@ class ChinchillaScalingLaw(ScalingLaw):
     def compute_optimal_allocation(self, C, *, U, **kw):
         return super().compute_optimal_allocation(C, U=U, **kw)
 
-    @classmethod
-    def fit(cls, data, *args, **kw):
+    # @classmethod
+    def fit(self, data, *args, **kw):
         N = data["N"].values.astype(float)
         D = data["D"].values.astype(float)
         L = data["Loss"].values.astype(float)

@@ -25,24 +25,17 @@ class PQItem(object):
 
 
 class GeneralScalingLaw(ScalingLaw):
-    variables = ("N", "D", )
-    default_vars = {"N": 1.0, "D": 1.0}
 
     def __init__(self, params: Dict[str, float], form_str=None, params_str=None, vars_str=None):#, variables=None):
         super().__init__(params)
         self.params = symbols(params_str)
-        self.param_dict = {}
-        self.param_names = []
-        for i, param in enumerate(params_str.split()):
-            self.param_dict[param.strip()] = self.params[i]
-            self.param_names.append(param.strip())
+        self.param_names = sorted([p.strip() for p in params_str.split()]) if params_str else []
+        self.param_dict = {p: self.params[i] for i, p in enumerate(params_str.split())}
         self.vars = symbols(vars_str)
-        self.vars_dict = {}
-        self.var_names = []
-        for i, var in enumerate(vars_str.split()):
-            self.vars_dict[var.strip()] = self.vars[i]
-            self.var_names.append(var.strip())
-        self.f = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all"), 'numpy')
+        self.var_names = sorted([v.strip() for v in vars_str.split()]) if vars_str else []
+        self.vars_dict = {v: self.vars[i] for i, v in enumerate(vars_str.split())} if vars_str else {}
+        # self.form = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all", local_dict={**self.vars_dict, **self.param_dict}), "numpy")
+        self.form = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all", local_dict={**self.vars_dict, **self.param_dict}), "numpy")
 
 
     def form_exp_parts(self, params_list: List[float], N, D):
@@ -54,10 +47,11 @@ class GeneralScalingLaw(ScalingLaw):
         ]
 
     # --- NumPy loss ------------------------------------------------------
-    def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
+    # def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
+    def loss_expr(self, *, inps, **kwargs):
         p = self.params
-        return self.form(**self.params, N=N, D=D)
-    
+        return self.form(**self.params, **inps)
+
     # --- Analytic N → D on iso‑loss ------------------------------------
     def N_to_D(self, N: float, target_loss: float, **other_vars) -> float:
         p = self.params
@@ -96,7 +90,8 @@ class GeneralScalingLaw(ScalingLaw):
         # partial_result = p.A / denominator
         # return partial_result ** (1 / p.alpha)
 
-    # def compute_optimal_train_tokens(self, x, T, L,):
+    def compute_optimal_train_tokens(self, x, T, L,):
+        pass
     #     """
     #     Equation (12) in https://arxiv.org/pdf/2401.00448
 

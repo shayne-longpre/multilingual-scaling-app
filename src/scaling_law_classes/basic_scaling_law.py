@@ -10,8 +10,6 @@ from src.scaling_law_classes.scaling_law import ScalingLaw
 
 
 class BasicScalingLaw(ScalingLaw):
-    variables = ("N", "D")
-    default_vars = {"N": 1.0, "D": 1.0}
 
     # --- NumPy loss ------------------------------------------------------
     def loss_expr(self, *, N: float, D: float, **kwargs):
@@ -19,8 +17,9 @@ class BasicScalingLaw(ScalingLaw):
         return p['irreducible'] + p['A'] / N**p['alpha'] + p['B'] / D**p['beta']
 
     # --- Torch loss (same as before) ------------------------------------
-    @staticmethod
-    def torch_loss(inp: torch.Tensor, theta: torch.Tensor, *, tie: bool = True):
+    # @staticmethod
+    def torch_loss(
+        self, inp: torch.Tensor, theta: torch.Tensor, *, tie: bool = True):
         if tie:
             a, b, e, alpha, beta = theta[0], theta[1], theta[2], theta[3], theta[3]
         else:
@@ -38,8 +37,9 @@ class BasicScalingLaw(ScalingLaw):
         ).sum()
 
     # --- NumPy pred for curve_fit --------------------------------------
-    @staticmethod
+    # @staticmethod
     def numpy_loss(
+        self,
         inp: np.ndarray, params: np.ndarray, *, tie: bool = True
     ) -> np.ndarray:
         if tie:
@@ -111,8 +111,8 @@ class BasicScalingLaw(ScalingLaw):
             + loss_diff
         )
 
-    @classmethod
-    def fit(cls, data, *args, **kw):
+    # @classmethod
+    def fit(self, data, *args, **kw):
         N = data["N"].values.astype(float)
         D = data["D"].values.astype(float)
         y = data["Loss"].values.astype(float)
@@ -127,7 +127,7 @@ class BasicScalingLaw(ScalingLaw):
         loss, theta, pq = minimize_scl_loss(
             init_params     = None,  # ignored because grid_specs is provided
             grid_specs      = grid,
-            torch_loss      = cls.torch_loss,
+            torch_loss      = self.torch_loss,
             inp_torch       = torch.tensor(np.c_[N, D, y], dtype=torch.float32),
             loss_kwargs     = {"tie": args.tie},
         )
