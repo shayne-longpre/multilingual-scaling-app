@@ -10,5 +10,5 @@ scikit-learn
 jupyterlab
 seaborn
 statsmodels
-altair
-streamlit
+streamlit>=1.25
+altair>=5
