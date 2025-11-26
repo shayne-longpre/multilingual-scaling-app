@@ -1,5 +1,6 @@
 import sys
 import heapq
+from collections import defaultdict
 from functools import partial
 from typing import Any, Iterable, NamedTuple, Dict, Callable, List, Tuple
 # import numpy as np
@@ -37,7 +38,7 @@ class ChinchillaScalingLaw(ScalingLaw):
     #     super().__init__(params)
     def __init__(
             self, 
-            params: Dict[str, float], 
+            params: Dict[str, float] = {}, 
             form_str="N ** alpha / A + D ** beta / B + E", 
             params_str="A B E alpha beta", 
             vars_str="N D",
@@ -48,7 +49,7 @@ class ChinchillaScalingLaw(ScalingLaw):
         param_symbols = symbols(params_str)
         self.param_names = sorted([p.strip() for p in params_str.split()]) if params_str else []
         self.param_symbol_dict = {p: param_symbols[i] for i, p in enumerate(params_str.split())}
-        self.params = {p: params[p] for p in self.param_names}
+        self.params = {p: params.get(p) for p in self.param_names}
 
         var_symbols = symbols(vars_str)
         self.var_names = sorted([v.strip() for v in vars_str.split()]) if vars_str else []
@@ -57,7 +58,7 @@ class ChinchillaScalingLaw(ScalingLaw):
         log_param_symbols = symbols(" ".join(f'log{p}' for p in self.param_names))
         self.log_params_names = [f'log{p}' for p in self.param_names]
         self.log_params_symbol_dict = {f'log{p}': log_param_symbols[i] for i, p in enumerate(self.param_names)}
-        self.log_params = {f'log{p}': np.log(params[p]) for p in self.param_names}
+        self.log_params = {f'log{p}': np.log(params.get(p)) if p in params else None for p in self.param_names }
 
         log_var_symbols = symbols(" ".join(f'log{v}' for v in self.var_names))
         self.log_vars_names = [f'log{v}' for v in self.var_names]
@@ -65,7 +66,7 @@ class ChinchillaScalingLaw(ScalingLaw):
 
         # self.form = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all", local_dict={**self.vars_dict, **self.param_dict}), "numpy")
         self.form = lambdify(
-            self.params + self.vars, 
+            param_symbols + var_symbols,
             parse_expr(
                 form_str.strip(), 
                 transformations="all", 
@@ -79,7 +80,8 @@ class ChinchillaScalingLaw(ScalingLaw):
         # form_exp_params_and_vars = [p for p in self.params + self.vars + self.log_params + self.log_vars if ]
         for part in form_exp_parts_str:
             self.form_exp_parts.append(lambdify(
-                self.params + self.vars + self.log_params + self.log_vars, 
+                # self.params + self.vars + self.log_params + self.log_vars, 
+                param_symbols + var_symbols + log_param_symbols + log_var_symbols, 
                 parse_expr(
                     part.strip(), 
                     transformations="all", 
@@ -98,7 +100,7 @@ class ChinchillaScalingLaw(ScalingLaw):
     #     ]
 
     # def form_exp_parts(self, params_list: List[float], N, D):
-    def form_exp_parts(self, params_list: Dict[str, float], inps: Dict[str, torch.Tensor]):
+    def apply_form_exp_parts(self, params_list: Dict[str, float], inps: Dict[str, torch.Tensor]):
         if self.form_exp_parts is None:
             return 
         # logA, logB, logE, alpha, beta = params_list
@@ -112,17 +114,19 @@ class ChinchillaScalingLaw(ScalingLaw):
         log_var_vals = {
             f"log{v}": torch.log(inps[v]) for v in self.var_names
         }
+        print(log_var_vals)
         lse_arr = [
             self.form_exp_parts[i](
                 **self.params, **inps, **self.log_params, **log_var_vals
             ) for i in range(len(self.form_exp_parts))
         ]
+        lse_arr = [torch.tensor([l]) if not isinstance(l, torch.Tensor) else l for l in lse_arr]
         # TODO expand shape of all tensors to match
         biggest_i = max(range(len(lse_arr)), key=lambda i: lse_arr[i].numel())
         return [lse_arr[i].expand_as(lse_arr[biggest_i]) for i in range(len(lse_arr))]
 
     # def form_exp_parts_numpy(self, params_list: List[float], N, D):
-    def form_exp_parts_numpy(self, params_list: Dict[str, float], inps):
+    def apply_form_exp_parts_numpy(self, params_list: Dict[str, float], inps):
         if self.form_exp_parts is None:
             return 
         # logA, logB, logE, alpha, beta = params_list
@@ -172,7 +176,7 @@ class ChinchillaScalingLaw(ScalingLaw):
 
         if L_eff <= 0:
             raise ValueError(
-                f"Target loss {L} must exceed irreducible loss {self.params["E"]}"
+                f"Target loss {L} must exceed irreducible loss {self.params['E']}"
             )
 
         denominator = L_eff - self.params["B"] / (D**self.params["beta"])

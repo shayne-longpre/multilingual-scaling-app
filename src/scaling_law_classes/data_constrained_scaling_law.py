@@ -145,8 +145,8 @@ class DataConstrainedScalingLaw(ScalingLaw):
     def compute_optimal_allocation(self, C, *, U, **kw):
         return super().compute_optimal_allocation(C, U=U, **kw)
 
-    @classmethod
-    def fit(cls, data, *args, **kw):
+    # @classmethod
+    def fit(self, data, *args, **kw):
         unique_tokens = data["U"].max()
         pre_epoch_sample = data[data["D"] <= unique_tokens]
 
@@ -187,7 +187,7 @@ class DataConstrainedScalingLaw(ScalingLaw):
             init_params   = init,
             grid_specs    = grid_vals,              # grid over the LAST 2 parameters
             params_to_fix = [0, 1, 2, 3, 4],        # first five are frozen
-            torch_loss    = cls.torch_loss,
+            torch_loss    = self.torch_loss,
             inp_torch     = torch_inputs,
         )
 
