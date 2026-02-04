@@ -11,9 +11,9 @@ scikit-learn
 jupyterlab
 seaborn
 statsmodels
-altair
-streamlit
 pytorch-minimize
 fastapi
 uvicorn[standard]
 python-multipart
+streamlit>=1.25
+altair>=5
