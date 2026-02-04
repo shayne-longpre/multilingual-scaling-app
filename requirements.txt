@@ -1,3 +1,4 @@
+autograd
 jsonlines
 numpy
 pandas
@@ -10,5 +11,9 @@ scikit-learn
 jupyterlab
 seaborn
 statsmodels
+pytorch-minimize
+fastapi
+uvicorn[standard]
+python-multipart
 streamlit>=1.25
 altair>=5

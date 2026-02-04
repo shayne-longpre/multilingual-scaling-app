@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, List, Mapping, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -8,14 +8,15 @@ from scipy.optimize import brentq, minimize_scalar, newton
 from sklearn.metrics import r2_score
 
 
-@dataclass(frozen=True)
-class LawParams:
-    A: float
-    B: float
-    irreducible: float
-    alpha: float
-    beta: float
-    extras: Mapping[str, float] = field(default_factory=dict)
+# @dataclass(frozen=True)
+# class LawParams:
+#     A: float
+#     B: float
+#     irreducible: float
+#     alpha: float
+#     beta: float
+#     extras: Mapping[str, float] = field(default_factory=dict)
+#     params: Mapping[str, float]
 
 
 class ScalingLaw(ABC):
@@ -34,18 +35,12 @@ class ScalingLaw(ABC):
     """
 
     # --- model‑specific metadata -----------------------------------------
-    variables: Sequence[str] = ()
-    default_vars: Mapping[str, float] = {}
+    # variables: Sequence[str] = ()
+    # default_vars: Mapping[str, float] = {}
     FLOPS_COEFF: float = 6.0  # override if k ≠ 6 for your law
 
-    def __init__(self, params: LawParams):
+    def __init__(self, params: Dict[str, float], ):
         self.params = params
-        try:
-            self.G = ((params.alpha * params.A) / (params.beta * params.B)) ** (
-                1 / (params.alpha + params.beta)
-            )
-        except Exception:
-            self.G = None
 
     def set_flops_coeff(self, flops_coeff):
         self.FLOPS_COEFF = flops_coeff
@@ -58,20 +53,34 @@ class ScalingLaw(ABC):
     @abstractmethod
     def loss_expr(self, **vars: float): ...
 
-    @staticmethod
     @abstractmethod
-    def torch_loss(inp: torch.Tensor, theta: torch.Tensor, **kw): ...
+    def torch_loss(
+        self,
+        params_list: torch.Tensor,
+        form_exp_parts: Callable,
+        inp: Dict[str, torch.Tensor],
+        tie_indices: List[List[int]] = [],
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
+    ) -> torch.Tensor: ...
 
-    @staticmethod
     @abstractmethod
-    def numpy_loss(X: np.ndarray, *theta, **kw) -> np.ndarray: ...
+    def numpy_loss(
+        self,
+        params_list: np.ndarray,
+        form_exp_parts: Callable,
+        inp: Dict[str, np.ndarray],
+        tie_indices: List[List[int]] = [],
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
+    ) -> np.ndarray: ...
 
-    @classmethod
     @abstractmethod
-    def fit(cls, *args, **kw): ...
+    def fit(cls, data, *args, **kw): ...
 
     def D_to_N(self, D):
-        return (D * self.G) ** (self.beta / self.alpha) * self.G
+        G = ((self.params['alpha'] * self.params['A']) / (self.params['beta'] * self.params['B'])) ** (
+                1 / (self.params['alpha'] + self.params['beta'])
+            )
+        return (D * G) ** (self.params['beta'] / self.params['alpha']) * G
 
     # ---------------- general iso‑loss utilities -------------------------
     # Each subclass *must* supply an analytic or numeric implementation.
@@ -94,12 +103,16 @@ class ScalingLaw(ABC):
 
     # ---------------- convenience --------------------------------------
     def loss(self, **vars):
-        merged = {**self.default_vars, **vars}
-        missing = [v for v in self.variables if v not in merged]
-        if missing:
-            raise ValueError(f"Missing vars {missing}")
+        # merged = {**self.default_vars, **vars}
+        # missing = [v for v in self.variables if v not in merged]
+        # if missing:
+        #     raise ValueError(f"Missing vars {missing}")
 
-        result = self.loss_expr(**merged)
+        # result = self.loss_expr(**merged)
+        
+        # Not sure it makes sense to have default N, D etc? 
+        # I think we should force the user to provide everything
+        result = self.loss_expr(**vars)
 
         # Only convert to float if it's a scalar
         if hasattr(result, "__len__") and len(result) > 1:
@@ -279,3 +292,4 @@ class ScalingLawWrapper:
     compute_budget_range: Tuple[int, int]
     extra_args: List[str]
     notes: str
+    use_init_params: bool = False
