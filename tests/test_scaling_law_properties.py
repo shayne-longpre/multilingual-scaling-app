@@ -11,7 +11,6 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from scaling_laws import ALL_SCALING_LAWS
-from scaling_law_classes.scaling_law import LawParams
 from scaling_law_classes.basic_scaling_law import BasicScalingLaw
 
 
@@ -26,7 +25,7 @@ class TestScalingLawProperties:
     @pytest.fixture
     def sample_params(self):
         """Sample parameters for creating test laws."""
-        return LawParams(A=400.0, B=2000.0, alpha=0.34, beta=0.28, irreducible=1.7)
+        return {'A': 400.0, 'B': 2000.0, 'E': 1.7, 'alpha': 0.34, 'beta': 0.28}
     
     def test_loss_monotonicity(self, all_laws):
         """Loss should decrease as N or D increase (holding others constant)."""
@@ -67,14 +66,18 @@ class TestScalingLawProperties:
     def test_loss_bounds(self, all_laws):
         """Loss should always be >= irreducible loss."""
         for name, law in all_laws.items():
-            irreducible = law.params.irreducible
+            # Handle both dict-based params (new style) and LawParams (legacy)
+            if isinstance(law.params, dict):
+                irreducible = law.params.get('E') or law.params.get('irreducible')
+            else:
+                irreducible = law.params.irreducible
             extra_args = {"U": 1e15} if "U" in getattr(law, 'variables', []) else {}
-            
+
             # Test various N, D combinations
             test_cases = [
                 (1e6, 1e8), (1e8, 1e10), (1e10, 1e12), (1e12, 1e14)
             ]
-            
+
             for N, D in test_cases:
                 try:
                     loss = law.loss(N=N, D=D, **extra_args)
@@ -86,7 +89,12 @@ class TestScalingLawProperties:
     def test_N_to_D_consistency(self, all_laws):
         """N_to_D should be consistent with loss function."""
         for name, law in all_laws.items():
-            target_loss = law.params.irreducible + 0.5  # Achievable loss
+            # Handle both dict-based params (new style) and LawParams (legacy)
+            if isinstance(law.params, dict):
+                irreducible = law.params.get('E') or law.params.get('irreducible')
+            else:
+                irreducible = law.params.irreducible
+            target_loss = irreducible + 0.5  # Achievable loss
             N_test = 1e8
             extra_args = {"U": 1e15} if "U" in getattr(law, 'variables', []) else {}
             
@@ -120,8 +128,12 @@ class TestScalingLawProperties:
                         f"{name}: Compute constraint violated. Budget: {C}, Computed: {computed_flops}"
                         
                     # Check that loss is reasonable
-                    assert result['loss'] > law.params.irreducible, \
-                        f"{name}: Optimal loss {result['loss']} <= irreducible {law.params.irreducible}"
+                    if isinstance(law.params, dict):
+                        irreducible = law.params.get('E') or law.params.get('irreducible')
+                    else:
+                        irreducible = law.params.irreducible
+                    assert result['loss'] > irreducible, \
+                        f"{name}: Optimal loss {result['loss']} <= irreducible {irreducible}"
                         
                 except Exception as e:
                     pytest.skip(f"Law {name} optimal allocation failed: {e}")
@@ -130,14 +142,22 @@ class TestScalingLawProperties:
         """Test scaling behavior at extreme values."""
         for name, law in all_laws.items():
             extra_args = {"U": 1e15} if "U" in getattr(law, 'variables', []) else {}
-            
+
             # Very large N should approach irreducible + B/D^beta
             N_large = 1e15
             D_test = 1e10
-            
+
             try:
                 loss_large_N = law.loss(N=N_large, D=D_test, **extra_args)
-                expected_approx = law.params.irreducible + law.params.B / (D_test ** law.params.beta)
+                if isinstance(law.params, dict):
+                    irreducible = law.params.get('E') or law.params.get('irreducible')
+                    B = law.params['B']
+                    beta = law.params['beta']
+                else:
+                    irreducible = law.params.irreducible
+                    B = law.params.B
+                    beta = law.params.beta
+                expected_approx = irreducible + B / (D_test ** beta)
                 
                 # Should be within reasonable range
                 assert abs(loss_large_N - expected_approx) / expected_approx < 0.1, \
@@ -149,19 +169,23 @@ class TestScalingLawProperties:
     def test_parameter_sensitivity(self, sample_params):
         """Test that parameter changes affect loss in expected directions."""
         base_law = BasicScalingLaw(sample_params)
-        
+
         # Increase A should increase loss (model term gets worse)
-        high_A_params = LawParams(A=sample_params.A * 2, B=sample_params.B, 
-                                  alpha=sample_params.alpha, beta=sample_params.beta,
-                                  irreducible=sample_params.irreducible)
+        high_A_params = {
+            'A': sample_params['A'] * 2,
+            'B': sample_params['B'],
+            'E': sample_params['E'],
+            'alpha': sample_params['alpha'],
+            'beta': sample_params['beta'],
+        }
         high_A_law = BasicScalingLaw(high_A_params)
-        
+
         N, D = 1e8, 1e10
         base_loss = base_law.loss(N=N, D=D)
         high_A_loss = high_A_law.loss(N=N, D=D)
-        
+
         assert high_A_loss > base_loss, "Higher A should increase loss"
-        
+
         # Similar tests for other parameters...
     
     def test_variable_requirements(self, all_laws):
@@ -188,13 +212,13 @@ class TestSpecificImplementations:
     
     def test_basic_scaling_law_formula(self):
         """Verify BasicScalingLaw implements correct formula."""
-        params = LawParams(A=400.0, B=2000.0, alpha=0.34, beta=0.28, irreducible=1.7)
+        params = {'A': 400.0, 'B': 2000.0, 'E': 1.7, 'alpha': 0.34, 'beta': 0.28}
         law = BasicScalingLaw(params)
-        
+
         N, D = 1e8, 1e10
         computed_loss = law.loss(N=N, D=D)
         expected_loss = 1.7 + 400.0/(N**0.34) + 2000.0/(D**0.28)
-        
+
         assert abs(computed_loss - expected_loss) < 1e-10, \
             f"Basic scaling law formula incorrect. Got {computed_loss}, expected {expected_loss}"
     
@@ -202,18 +226,26 @@ class TestSpecificImplementations:
         """When U is very large, DataConstrainedScalingLaw should approach BasicScalingLaw."""
         if "Data-Constrained Scaling Law" not in ALL_SCALING_LAWS:
             pytest.skip("DataConstrainedScalingLaw not available")
-            
+
         dc_law = ALL_SCALING_LAWS["Data-Constrained Scaling Law"].scaling_law
-        basic_law = ALL_SCALING_LAWS["Chinchilla"].scaling_law
+        # Use Chinchilla (Hoffmann 2022) or any available Chinchilla-like law
+        chinchilla_key = next((k for k in ALL_SCALING_LAWS.keys() if "Chinchilla" in k), None)
+        if chinchilla_key is None:
+            pytest.skip("No Chinchilla law available for comparison")
+        basic_law = ALL_SCALING_LAWS[chinchilla_key].scaling_law
         
         N, D = 1e8, 1e10
         U_unlimited = 1e15
         
         dc_loss = dc_law.loss(N=N, D=D, U=U_unlimited)
-        
+
         # Should be reasonably close to a basic scaling law
         # (not identical due to different parameters, but should follow similar scaling)
-        assert dc_loss > dc_law.params.irreducible, \
+        if isinstance(dc_law.params, dict):
+            irreducible = dc_law.params.get('E') or dc_law.params.get('irreducible')
+        else:
+            irreducible = dc_law.params.irreducible
+        assert dc_loss > irreducible, \
             "Data-constrained law with unlimited U should give reasonable loss"
 
 

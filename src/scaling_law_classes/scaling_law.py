@@ -54,10 +54,24 @@ class ScalingLaw(ABC):
     def loss_expr(self, **vars: float): ...
 
     @abstractmethod
-    def torch_loss(from_exp_parts: Callable, params_list: Iterable[float], inp: torch.Tensor, loss_kwargs: Dict, **kw): ...
+    def torch_loss(
+        self,
+        params_list: torch.Tensor,
+        form_exp_parts: Callable,
+        inp: Dict[str, torch.Tensor],
+        tie_indices: List[List[int]] = [],
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
+    ) -> torch.Tensor: ...
 
     @abstractmethod
-    def numpy_loss(from_exp_parts: Callable, params_list: Iterable[float], inp: np.ndarray,  loss_kwargs: Dict, **kw) -> np.ndarray: ...
+    def numpy_loss(
+        self,
+        params_list: np.ndarray,
+        form_exp_parts: Callable,
+        inp: Dict[str, np.ndarray],
+        tie_indices: List[List[int]] = [],
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
+    ) -> np.ndarray: ...
 
     @abstractmethod
     def fit(cls, data, *args, **kw): ...
@@ -278,3 +292,4 @@ class ScalingLawWrapper:
     compute_budget_range: Tuple[int, int]
     extra_args: List[str]
     notes: str
+    use_init_params: bool = False

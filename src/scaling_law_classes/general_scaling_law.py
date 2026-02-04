@@ -1,19 +1,22 @@
+import re
 import sys
 import heapq
+import os.path
 from functools import partial
-from typing import Any, NamedTuple, Dict, Callable, List, Tuple
-# import numpy as np
+from typing import Any, Dict, Callable, List, Tuple
+
 import autograd.numpy as np
-from autograd.scipy.stats import norm
-from sympy import symbols, lambdify, parse_expr
+import pandas as pd
 import torch
 from torchmin import minimize, least_squares
-# from scipy.optimize import brentq, curve_fit, minimize, least_squares, OptimizeWarning
+from sympy import symbols, lambdify, parse_expr
+from scipy.optimize import brentq
 
 sys.path.append("./")
 sys.path.append("src/")
 
 from src.scaling_law_classes.scaling_law import ScalingLaw
+
 
 class PQItem(object):
     def __init__(self, loss, params):
@@ -21,283 +24,549 @@ class PQItem(object):
         self.params = params
 
     def __lt__(self, other):
-        return self.loss > other.loss # reversed because we want to retain lower loss params
+        return self.loss > other.loss  # reversed because we want to retain lower loss params
+
+
+def _infer_optim_params_names(form_exp_parts_str: List[str], param_names: List[str]) -> List[str]:
+    """
+    Infer which parameters are used in the form_exp_parts expressions and in what form.
+
+    If a param appears as `logX`, add `logX` to optim_params_names (optimize in log space).
+    If a param appears as `X` (not as part of logX), add `X` to optim_params_names.
+
+    Returns sorted list of optim param names to ensure consistent ordering.
+    """
+    optim_params = set()
+    log_param_names = {f"log{p}" for p in param_names}
+
+    for expr in form_exp_parts_str:
+        # Find all identifiers in the expression
+        tokens = set(re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', expr))
+
+        for token in tokens:
+            if token in log_param_names:
+                # This is a log-space param (e.g., logA)
+                optim_params.add(token)
+            elif token in param_names:
+                # This is an original param used directly (e.g., alpha, beta)
+                optim_params.add(token)
+
+    return sorted(optim_params)
 
 
 class GeneralScalingLaw(ScalingLaw):
+    """
+    A general-purpose scaling law class that can represent any scaling law form.
 
-    def __init__(self, params: Dict[str, float], form_str=None, params_str=None, vars_str=None):#, variables=None):
+    This class is designed to be subclassed (e.g., ChinchillaScalingLaw) or instantiated
+    directly with custom form strings.
+
+    Args:
+        params: Dict mapping parameter names to values (e.g., {'A': 1.0, 'B': 2.0, ...})
+        form_str: The loss formula as a string (e.g., "A / N**alpha + B / D**beta + E")
+        params_str: Space-separated parameter names (e.g., "A B E alpha beta")
+        vars_str: Space-separated variable names (e.g., "N D")
+        form_exp_parts_str: List of log-space expressions for log-sum-exp computation
+            (e.g., ["logA - alpha * logN", "logB - beta * logD", "logE"])
+        is_fit_already: Whether this law has already been fit to data
+    """
+
+    def __init__(
+        self,
+        params: Dict[str, float],
+        form_str: str,
+        params_str: str,
+        vars_str: str,
+        form_exp_parts_str: List[str],
+        is_fit_already: bool = False,
+    ):
         super().__init__(params)
-        self.params = symbols(params_str)
-        self.param_names = sorted([p.strip() for p in params_str.split()]) if params_str else []
-        self.param_dict = {p: self.params[i] for i, p in enumerate(params_str.split())}
-        self.vars = symbols(vars_str)
-        self.var_names = sorted([v.strip() for v in vars_str.split()]) if vars_str else []
-        self.vars_dict = {v: self.vars[i] for i, v in enumerate(vars_str.split())} if vars_str else {}
-        # self.form = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all", local_dict={**self.vars_dict, **self.param_dict}), "numpy")
-        self.form = lambdify(self.params + self.vars, parse_expr(form_str, transformations="all", local_dict={**self.vars_dict, **self.param_dict}), "numpy")
+        self.is_fit_already = is_fit_already
 
+        # Parse parameter names and create symbols
+        param_symbols = symbols(params_str)
+        self.param_names = sorted([p.strip() for p in params_str.split()])
+        self.param_symbol_dict = {p: param_symbols[i] for i, p in enumerate(params_str.split())}
+        self.params = {p: params.get(p) for p in self.param_names}
 
-    def form_exp_parts(self, params_list: List[float], N, D):
-        logA, logB, logE, alpha, beta = params_list
-        return [
-            logA - alpha * torch.log(N),
-            logB - beta * torch.log(D),
-            logE.expand(D.shape[0])
-        ]
+        # Parse variable names and create symbols
+        var_symbols = symbols(vars_str)
+        self.var_names = sorted([v.strip() for v in vars_str.split()])
+        self.var_symbol_dict = {v: var_symbols[i] for i, v in enumerate(vars_str.split())}
 
-    # --- NumPy loss ------------------------------------------------------
-    # def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
-    def loss_expr(self, *, inps, **kwargs):
-        p = self.params
-        return self.form(**self.params, **inps)
+        # Create log versions of parameters
+        log_param_symbols = symbols(" ".join(f'log{p}' for p in self.param_names))
+        self.log_params_names = [f'log{p}' for p in self.param_names]
+        self.log_params_symbol_dict = {f'log{p}': log_param_symbols[i] for i, p in enumerate(self.param_names)}
+        self.log_params = {f'log{p}': np.log(params.get(p)) if params.get(p) is not None else None
+                          for p in self.param_names}
 
-    # --- Analytic N → D on iso‑loss ------------------------------------
+        # Create log versions of variables
+        log_var_symbols = symbols(" ".join(f'log{v}' for v in self.var_names))
+        self.log_vars_names = [f'log{v}' for v in self.var_names]
+        self.log_vars_symbol_dict = {f'log{v}': log_var_symbols[i] for i, v in enumerate(self.var_names)}
+
+        # Infer optim_params_names from form_exp_parts_str
+        self.optim_params_names = _infer_optim_params_names(form_exp_parts_str, self.param_names)
+
+        # Lambdify the main loss form
+        self.form = lambdify(
+            param_symbols + var_symbols,
+            parse_expr(
+                form_str.strip(),
+                transformations="all",
+                local_dict={**self.var_symbol_dict, **self.param_symbol_dict}
+            ),
+            "numpy"
+        )
+
+        # Lambdify each form_exp_parts expression
+        self.form_exp_parts = []
+        self.form_exp_parts_str = form_exp_parts_str
+        for part in form_exp_parts_str:
+            self.form_exp_parts.append(lambdify(
+                param_symbols + var_symbols + log_param_symbols + log_var_symbols,
+                parse_expr(
+                    part.strip(),
+                    transformations="all",
+                    local_dict={
+                        **self.param_symbol_dict, **self.var_symbol_dict,
+                        **self.log_vars_symbol_dict, **self.log_params_symbol_dict
+                    }
+                ),
+                "numpy"
+            ))
+
+    def apply_form_exp_parts(self, params_list: torch.Tensor, inps: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
+        """
+        Evaluate the sympy expressions using the optimizer's current parameter values.
+
+        Args:
+            params_list: tensor of parameter values from optimizer, in order of self.optim_params_names
+            inps: dict with variable tensors (e.g., 'N', 'D') and 'Loss' tensor
+        """
+        if not self.form_exp_parts:
+            return []
+
+        # Build dict from optimizer params
+        opt_params = {}
+        for i, name in enumerate(self.optim_params_names):
+            opt_params[name] = params_list[i]
+
+        # Compute all param values (both original and log versions)
+        param_vals = {}
+        log_param_vals = {}
+        for p in self.param_names:
+            log_name = f"log{p}"
+            if log_name in opt_params:
+                # This param is optimized in log space
+                log_param_vals[log_name] = opt_params[log_name]
+                param_vals[p] = torch.exp(opt_params[log_name])
+            elif p in opt_params:
+                # This param is optimized in original space
+                param_vals[p] = opt_params[p]
+                log_param_vals[log_name] = torch.log(opt_params[p])
+            else:
+                # This param is not being optimized, use stored value
+                param_vals[p] = torch.tensor(self.params[p]) if self.params[p] is not None else torch.tensor(0.0)
+                log_param_vals[log_name] = torch.log(param_vals[p])
+
+        # Get variable values and compute log versions
+        var_vals = {v: inps[v] for v in self.var_names}
+        log_var_vals = {f"log{v}": torch.log(inps[v]) for v in self.var_names}
+
+        # Build positional args in the correct order:
+        # param_symbols + var_symbols + log_param_symbols + log_var_symbols
+        # Note: symbols are created from the original (unsorted) order, but we sort param_names/var_names
+        # We need to pass args in the order that matches how symbols were created
+        original_param_order = self.param_symbol_dict.keys()
+        original_var_order = self.var_symbol_dict.keys()
+
+        args = []
+        for p in original_param_order:
+            args.append(param_vals[p])
+        for v in original_var_order:
+            args.append(var_vals[v])
+        for p in original_param_order:
+            args.append(log_param_vals[f"log{p}"])
+        for v in original_var_order:
+            args.append(log_var_vals[f"log{v}"])
+
+        # Evaluate each expression
+        lse_arr = [self.form_exp_parts[i](*args) for i in range(len(self.form_exp_parts))]
+
+        # Convert scalars to tensors if needed
+        lse_arr = [torch.tensor([l]) if not isinstance(l, torch.Tensor) else l for l in lse_arr]
+
+        # Expand shape of all tensors to match the biggest one
+        biggest_i = max(range(len(lse_arr)), key=lambda i: lse_arr[i].numel())
+        return [lse_arr[i].expand_as(lse_arr[biggest_i]) for i in range(len(lse_arr))]
+
+    def apply_form_exp_parts_numpy(self, params_list: np.ndarray, inps: Dict[str, np.ndarray]) -> List[np.ndarray]:
+        """
+        NumPy version of apply_form_exp_parts for gradient-based optimization with autograd.
+        """
+        if not self.form_exp_parts:
+            return []
+
+        # Build dict from optimizer params
+        opt_params = {}
+        for i, name in enumerate(self.optim_params_names):
+            opt_params[name] = params_list[i]
+
+        # Compute all param values
+        param_vals = {}
+        log_param_vals = {}
+        for p in self.param_names:
+            log_name = f"log{p}"
+            if log_name in opt_params:
+                log_param_vals[log_name] = opt_params[log_name]
+                param_vals[p] = np.exp(opt_params[log_name])
+            elif p in opt_params:
+                param_vals[p] = opt_params[p]
+                log_param_vals[log_name] = np.log(opt_params[p])
+            else:
+                param_vals[p] = self.params[p] if self.params[p] is not None else 0.0
+                log_param_vals[log_name] = np.log(param_vals[p])
+
+        var_vals = {v: inps[v] for v in self.var_names}
+        log_var_vals = {f"log{v}": np.log(inps[v]) for v in self.var_names}
+
+        original_param_order = self.param_symbol_dict.keys()
+        original_var_order = self.var_symbol_dict.keys()
+
+        args = []
+        for p in original_param_order:
+            args.append(param_vals[p])
+        for v in original_var_order:
+            args.append(var_vals[v])
+        for p in original_param_order:
+            args.append(log_param_vals[f"log{p}"])
+        for v in original_var_order:
+            args.append(log_var_vals[f"log{v}"])
+
+        lse_arr = [self.form_exp_parts[i](*args) for i in range(len(self.form_exp_parts))]
+
+        # Ensure all are arrays and expand to match biggest shape
+        lse_arr = [np.atleast_1d(l) for l in lse_arr]
+        biggest_i = max(range(len(lse_arr)), key=lambda i: lse_arr[i].size)
+        return [np.resize(lse_arr[i], lse_arr[biggest_i].shape) for i in range(len(lse_arr))]
+
+    def loss_expr(self, *, N: float, D: float, **kwargs) -> float:
+        """Compute loss given N and D using the lambdified form."""
+        return self.form(**self.params, N=N, D=D)
+
     def N_to_D(self, N: float, target_loss: float, **other_vars) -> float:
-        p = self.params
-        # L_eff = target_loss - p.irreducible
-        # if L_eff <= 0:
-        #     raise ValueError("target_loss must exceed irreducible loss")
-        # denom = L_eff - p.A / N**p.alpha
-        # if denom <= 0:
-        #     raise ValueError(
-        #         "No finite D can satisfy the loss at this N (denominator ≤ 0)"
-        #     )
-        # D = (p.B / denom) ** (1.0 / p.beta)
-        # return D
-
-    def DL_to_N(self, D, L):
         """
-        Minimum number of model params needed to reach L model loss after D tokens.
+        Return D such that loss(N, D) == target_loss.
 
-        This is the regular Chinchilla equation solved for N.
+        Uses numerical root finding since the general form may not have an analytic solution.
         """
-        p = self.params
-        # L_eff = L - p.irreducible
+        def objective(D):
+            return self.loss_expr(N=N, D=D, **other_vars) - target_loss
 
-        # if L_eff <= 0:
-        #     raise ValueError(
-        #         f"Target loss {L} must exceed irreducible loss {p.irreducible}"
-        #     )
+        # Search over a wide range of D values
+        D_min, D_max = 1e3, 1e18
 
-        # denominator = L_eff - p.B / (D**p.beta)
+        # Check bounds
+        loss_at_min = objective(D_min)
+        loss_at_max = objective(D_max)
 
-        # if denominator <= 0:
-        #     raise ValueError(
-        #         f"Cannot achieve loss {L} with {D} tokens - need more data"
-        #     )
+        if loss_at_min * loss_at_max > 0:
+            raise ValueError(
+                f"No solution found in range [{D_min}, {D_max}]. "
+                f"Loss at D_min: {loss_at_min + target_loss}, Loss at D_max: {loss_at_max + target_loss}"
+            )
 
-        # partial_result = p.A / denominator
-        # return partial_result ** (1 / p.alpha)
+        return brentq(objective, D_min, D_max, xtol=1e-10)
 
-    def compute_optimal_train_tokens(self, x, T, L,):
-        pass
-    #     """
-    #     Equation (12) in https://arxiv.org/pdf/2401.00448
+    def DL_to_N(self, D: float, L: float, **other_vars) -> float:
+        """
+        Return N such that loss(N, D) == L.
 
-    #     Find the optimal number of tokens (D) to train on for a model
-    #     of quality L (pre-training loss L) and run inference for T tokens.
-    #     This method is used by a solver (e.g. Newton's method) to find root (optimal D).
-    #     We cannot use a formula because there is no analytical formula when T > 0.
+        Uses numerical root finding since the general form may not have an analytic solution.
+        """
+        def objective(N):
+            return self.loss_expr(N=N, D=D, **other_vars) - L
 
-    #     The equation is:
-    #     (β·B/α + B)·D^(-β) + (T·β·B)/(3·α)·D^(-β-1) + E - L = 0
-    #     """
-    #     p = self.params
+        N_min, N_max = 1e3, 1e18
 
-    #     coeff_1 = (p.beta * p.B) / p.alpha + p.B
-    #     coeff_2 = (T * p.beta * p.B) / (3 * p.alpha)
-    #     loss_diff = p.irreducible - L
+        loss_at_min = objective(N_min)
+        loss_at_max = objective(N_max)
 
-    #     return (
-    #         coeff_1 * x ** (-1 * p.beta)
-    #         + coeff_2 * x ** ((-1 * p.beta) - 1)
-    #         + loss_diff
-    #     )
+        if loss_at_min * loss_at_max > 0:
+            raise ValueError(
+                f"No solution found in range [{N_min}, {N_max}]. "
+                f"Loss at N_min: {loss_at_min + L}, Loss at N_max: {loss_at_max + L}"
+            )
 
-    @staticmethod
+        return brentq(objective, N_min, N_max, xtol=1e-10)
+
+    def compute_optimal_train_tokens(self, x: float, T: float, L: float) -> float:
+        """
+        Generic implementation for finding optimal training tokens.
+
+        This is a fallback that uses the loss equation directly. Subclasses may override
+        with analytic solutions for better performance.
+
+        For Chinchilla-like laws, this corresponds to Equation (12) in
+        https://arxiv.org/pdf/2401.00448 - finding the optimal D given target loss L
+        and inference tokens T.
+
+        Returns the residual (should be zero at the optimal D).
+        """
+        # For general case, we need the derivative of loss w.r.t. D
+        # This is a simplified version that assumes the standard form
+        # Subclasses should override with their specific formula
+        raise NotImplementedError(
+            "compute_optimal_train_tokens must be overridden in subclasses with specific formulas. "
+            "The general form requires knowing the derivative structure of the loss function."
+        )
+
     def torch_loss(
-        form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]], 
-        params_list: List[float] | Tuple[float], 
-        inp: Dict[str, torch.Tensor], 
+        self,
+        params_list: torch.Tensor,
+        form_exp_parts: Callable,
+        inp: Dict[str, torch.Tensor],
         tie_indices: List[List[int]] = [],
-        loss_func: str = 'log_huber', 
-        delta: float = 1e-3
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
     ) -> torch.Tensor:
+        """Compute loss for optimization using PyTorch."""
+        loss_func = loss_kwargs.get('loss_func', 'log_huber')
+        delta = loss_kwargs.get('delta', 1e-3)
+
         for tie_params in tie_indices:
             tie_source = params_list[tie_params[0]]
             for i in tie_params[1:]:
                 params_list[i] = tie_source
 
         pre = torch.stack(form_exp_parts(params_list, inp))
-        post = torch.logsumexp(pre, dim=0) # log scale
+        post = torch.logsumexp(pre, dim=0)
 
         if loss_func == 'log_huber':
             return torch.nn.functional.huber_loss(
-                post, torch.log(inp["Loss"]), delta=delta
+                post, torch.log(inp["Loss"]), delta=delta, reduction="none"
             ).sum()
         elif loss_func == 'huber':
             return torch.nn.functional.huber_loss(
-                torch.exp(post), inp["Loss"], delta=delta
+                torch.exp(post), inp["Loss"], delta=delta, reduction="none"
             ).sum()
-        # elif loss_func == 'scaled_log_huber': # NOT WORKING YET
-        #     return torch.nn.functional.huber_loss(
-        #         post, torch.log(inp[:, 2]), delta=delta
-        #     ).sum() / torch.exp(params['sigma']) + 0.5 * torch.log(2 * torch.pi) + params['sigma'] + torch.log(
-        #         torch.sqrt(2 * torch.pi) * (1 - 2 * torch.exp(-0.5 * (delta)**2) * norm.sf(delta)) + 2 * torch.exp(-0.5 * (delta)**2) / delta
-        #     ) # p.sqrt(2*np.pi) * (1 - 2*norm.sf(delta)) + 2 * np.exp(-0.5*delta**2)/delta  + np.log(scale)
         elif loss_func == 'log_mae':
             return torch.abs(torch.log(inp["Loss"]) - post).sum()
         elif loss_func == 'log_mse':
             return ((torch.log(inp["Loss"]) - post) ** 2).sum()
         else:
             raise NotImplementedError(f"Loss function {loss_func} not implemented.")
-    
-    @staticmethod
-    def numpy_loss(inp: np.ndarray, params: np.ndarray) -> np.ndarray:
-        a, b, e, alpha, beta = params
-        N, D = inp[:, 0], inp[:, 1]
-        return np.exp(e) + np.exp(a) / N**alpha + np.exp(b) / D**beta
+
+    def numpy_loss(
+        self,
+        params_list: np.ndarray,
+        form_exp_parts: Callable,
+        inp: Dict[str, np.ndarray],
+        tie_indices: List[List[int]] = [],
+        loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
+    ) -> np.ndarray:
+        """Compute loss for optimization using NumPy (compatible with autograd)."""
+        loss_func = loss_kwargs.get('loss_func', 'log_huber')
+        delta = loss_kwargs.get('delta', 1e-3)
+
+        for tie_params in tie_indices:
+            tie_source = params_list[tie_params[0]]
+            for i in tie_params[1:]:
+                params_list[i] = tie_source
+
+        pre = np.stack(form_exp_parts(params_list, inp))
+        from functools import reduce as functools_reduce
+        post = functools_reduce(np.logaddexp, pre)
+
+        if loss_func == 'log_huber':
+            return np.sum(
+                np.where(
+                    np.abs(np.log(inp["Loss"]) - post) <= delta,
+                    0.5 * (np.log(inp["Loss"]) - post)**2,
+                    delta * (np.abs(np.log(inp["Loss"]) - post) - 0.5 * delta)))
+        elif loss_func == 'huber':
+            return np.sum(
+                np.where(
+                    np.abs(inp["Loss"] - np.exp(post)) <= delta,
+                    0.5 * (inp["Loss"] - np.exp(post))**2,
+                    delta * (np.abs(inp["Loss"] - np.exp(post)) - 0.5 * delta)))
+        elif loss_func == 'log_mae':
+            return np.abs(np.log(inp["Loss"]) - post).sum()
+        elif loss_func == 'log_mse':
+            return ((np.log(inp["Loss"]) - post) ** 2).sum()
+        else:
+            raise NotImplementedError(f"Loss function {loss_func} not implemented.")
 
     def iso_loss_function(self, target_loss: float, **other_vars):
-        if "U" not in other_vars:
-            raise ValueError("iso_loss_function requires keyword argument 'U'")
         return super().iso_loss_function(target_loss, **other_vars)
 
-    def compute_optimal_allocation(self, C, *, U, **kw):
-        return super().compute_optimal_allocation(C, U=U, **kw)
+    def compute_optimal_allocation(self, C, **kw):
+        return super().compute_optimal_allocation(C, **kw)
 
-    @classmethod
-    def fit(cls, data, *args, **kw):
-        N  = data["N"].values.astype(float)
-        D  = data["D"].values.astype(float)
-        L   = data["Loss"].values.astype(float)
-        print(f"Data points: {len(data)}.")
-        grid = {
-            'a': torch.arange(start=0, end=25, step=5),
-            'b': torch.arange(start=0, end=25, step=5),
-            'e': torch.arange(start=-1, end=1, step=0.5),
-            'alpha': torch.arange(start=0, end=2, step=0.5),
-            'beta': torch.arange(start=0, end=2, step=0.5)
-        }
+    def fit(self, data, init_params: Dict[str, float] | None = None, *args, **kwargs):
+        """
+        Fit the scaling law to data.
+
+        Args:
+            data: DataFrame or path to CSV file with columns for each variable plus 'Loss'
+            init_params: Optional dict of initial parameter values for optimization
+        """
+        if self.is_fit_already:
+            raise RuntimeError("Scaling Law is already fit.")
+
+        # Handle both DataFrame and file path inputs
+        if isinstance(data, str):
+            if not os.path.isfile(data):
+                raise FileNotFoundError(f"Data source file {data} not found.")
+            if not data.endswith('.csv'):
+                raise ValueError("Data source file must be a CSV file.")
+            data = pd.read_csv(data)
+
+        # Check required columns
+        missing_cols = [v for v in self.var_names if v not in data.columns]
+        if missing_cols:
+            raise ValueError(f"Data must contain columns: {missing_cols}")
+        if "Loss" not in data.columns:
+            raise ValueError("Data must contain 'Loss' column.")
+
+        # Build input tensors
+        inp_torch = {v: torch.tensor(data[v].values.astype(float), dtype=torch.float32)
+                     for v in self.var_names}
+        inp_torch["Loss"] = torch.tensor(data["Loss"].values.astype(float), dtype=torch.float32)
+
+        # Build grid for optimization
+        if init_params is not None:
+            grid = {}
+            for name in self.optim_params_names:
+                if name.startswith('log'):
+                    base_name = name[3:]
+                    grid[name] = torch.tensor([np.log(init_params[base_name])], dtype=torch.float32)
+                else:
+                    grid[name] = torch.tensor([init_params[name]], dtype=torch.float32)
+        else:
+            # Default grid - works for Chinchilla-like laws
+            grid = {}
+            for name in self.optim_params_names:
+                if name.startswith('log'):
+                    grid[name] = torch.arange(start=0, end=25+5, step=5.0)
+                elif name in ('alpha', 'beta'):
+                    grid[name] = torch.arange(start=0, end=2+0.5, step=0.5)
+                else:
+                    grid[name] = torch.arange(start=-1, end=1+0.5, step=0.5)
+
         loss, theta, _pq = minimize_scl_loss(
-            init_params     = None,  # ignored because grid_specs is provided
-            grid_specs      = grid,
-            torch_loss      = cls.torch_loss,
-            form_exp_parts  = cls.form_exp_parts,
-            inp_torch       = torch.tensor(np.c_[N, D, L], dtype=torch.float32),
-            loss_kwargs     = {"tie_groups": args.get('tie', [])},
-            param_names     = cls.params_names,
-
+            init_params=None,
+            grid_specs=grid,
+            torch_loss=self.torch_loss,
+            form_exp_parts=self.apply_form_exp_parts,
+            inp_torch=inp_torch,
+            loss_kwargs={"tie_groups": kwargs.get('tie', []), "delta": 1e-3, "loss_func": "log_huber"},
+            param_names=self.optim_params_names,
         )
 
+        # Convert optimizer params back to original param names
         fit_params = {}
-        for k in cls.params_names:
-            if k.startswith('log'):
-                fit_params[k[3:]] = np.exp(theta[k])
+        for name in self.optim_params_names:
+            if name.startswith('log'):
+                base_name = name[3:]
+                fit_params[base_name] = np.exp(theta[name])
             else:
-                fit_params[k] = theta[k]
+                fit_params[name] = theta[name]
+
         return loss, fit_params
 
-        
-@staticmethod
+
 def minimize_scl_loss(
     init_params: List[float],
     grid_specs: Dict[str, np.ndarray],
-    torch_loss: Callable[[Callable, torch.Tensor, Dict, str, bool, float], torch.Tensor],
-    form_exp_parts: Callable[[Dict, torch.Tensor], List[torch.Tensor]],
+    torch_loss: Callable,
+    form_exp_parts: Callable,
     inp_torch: Dict[str, torch.Tensor],
     param_names: List[str] = [],
     loss_kwargs: Dict[str, Any] = None,
-    method: str='BFGS',
-    max_opt_inits: int = -1,  # no max by default
-    indices=None,
-    keep_best_k_from_init_grid=-1,
-    use_grad=False,
-    tol=None,
-):
+    method: str = 'BFGS',
+    max_opt_inits: int = -1,
+    keep_best_k_from_init_grid: int = -1,
+    tol: float = None,
+) -> Tuple[float, Dict[str, float], List[PQItem]]:
     """
-    From hoffman, et al:
-    We use the LBFGS algorithm to find local minima of the objective above, started on a grid
-    of initialisation given by:
-    𝛼 ∈ {0., 0.5, . . . , 2.},
-    𝛽 ∈ {0., 0.5, . . . , 2.},
-    𝑒 ∈ {−1., −.5, . . . , 1.},
-    𝑎 ∈ {0, 5, . . . , 25}, and
-    𝑏 ∈ {0, 5, . . . , 25}
+    Minimize scaling law loss over a grid of initial parameter values.
+
+    From Hoffmann et al: Uses LBFGS algorithm to find local minima, started on a grid
+    of initializations.
+
+    Args:
+        init_params: Initial parameter values (ignored if grid_specs provided)
+        grid_specs: Dict mapping param names to arrays of initial values
+        torch_loss: Loss function to minimize
+        form_exp_parts: Function that computes log-sum-exp parts
+        inp_torch: Input tensors (N, D, Loss, etc.)
+        param_names: Names of parameters being optimized
+        loss_kwargs: Additional kwargs for loss function
+        method: Optimization method ('BFGS', 'grid', etc.)
+        max_opt_inits: Maximum number of initializations to try (-1 = no limit)
+        keep_best_k_from_init_grid: Only optimize from top k initial points
+        tol: Optimization tolerance
+
+    Returns:
+        Tuple of (best_loss, best_params_dict, priority_queue_of_results)
     """
+    if loss_kwargs is None:
+        loss_kwargs = {}
 
     best_loss = np.inf
     best_params = None
     pq = []
-    param_list = []
     i = 0
-    tie_indices = [
-        [param_names.index(p) 
-            if p in param_names else 
-            param_names.index(p[3:]) 
-            for p in tie_group]  # logA → A
+
+    loss_kwargs['tie_indices'] = [
+        [param_names.index(p) if p in param_names else param_names.index(p[3:])
+         for p in tie_group]
         for tie_group in loss_kwargs.get('tie_groups', [])
     ]
 
-
-    if init_params:
-        assert grid_specs is None, "Cannot provide both init_params and grid_specs"
-        grid_specs = [init_params]
-    if grid_specs is None:
-        grid_specs = {
-            'a': np.arange(0, 25, 5),
-            'b': np.arange(0, 25, 5),
-            'e': np.arange(-1, 1, 0.5),
-            'alpha': np.arange(0, 2, 0.5),
-            'beta': np.arange(0, 2, 0.5)
-        }
-
-    grid = np.array(np.meshgrid(
-        *[grid_specs[key] for key in sorted(grid_specs.keys())]
-    )).T.reshape(-1, len(grid_specs))
-    np.random.shuffle(grid)
+    # Build grid of initial parameters
+    grid = torch.stack(torch.meshgrid(
+        *[grid_specs[key] if key in grid_specs else grid_specs[f"log{key}"]
+          for key in param_names],
+        indexing='ij'
+    ))
+    grid = grid.permute(*torch.arange(grid.ndim - 1, -1, -1)).reshape(-1, len(grid_specs))
+    grid = grid[torch.randperm(grid.size(0))]
 
     if keep_best_k_from_init_grid > 0:
         init_pq = []
-        for init_params in grid:
-            init_loss = torch_loss(init_params, N[indices], D[indices], L[indices])#, form=form)
+        for init_p in grid:
+            init_loss = torch_loss(init_p, form_exp_parts, inp_torch, loss_kwargs=loss_kwargs)
             if len(init_pq) < keep_best_k_from_init_grid:
-                heapq.heappush(init_pq, PQItem(init_loss, init_params))
+                heapq.heappush(init_pq, PQItem(init_loss, init_p))
             elif init_loss < init_pq[0].loss:
-                heapq.heappushpop(init_pq, PQItem(init_loss, init_params))
+                heapq.heappushpop(init_pq, PQItem(init_loss, init_p))
         grid = [pq_item.params for pq_item in heapq.nlargest(keep_best_k_from_init_grid, init_pq)]
 
-
-    results_dict = {}
-    for init_params in grid:
+    for init_p in grid:
         if method == 'grid':
-            params = init_params
-            loss = torch_loss(init_params, inp_torch, loss_kwargs=loss_kwargs)
+            params = init_p
+            loss = torch_loss(init_p, form_exp_parts, inp_torch, loss_kwargs=loss_kwargs)
             success = True
         else:
-            obj = partial(torch_loss, inp=inp_torch, form_exp_parts=form_exp_parts, loss_func=loss_kwargs.get('loss_func', 'log_huber'), tie_indices=tie_indices, delta=loss_kwargs.get('delta', 1e-3))
+            obj = partial(torch_loss, form_exp_parts=form_exp_parts, inp=inp_torch, loss_kwargs=loss_kwargs)
             if method == 'nonlinear_least_squares':
-                result = least_squares(obj, init_params)
+                result = least_squares(obj, init_p)
             else:
-                result = minimize(obj, init_params, tol=tol, method=method)
+                result = minimize(obj, init_p, tol=tol, method=method)
 
-            
-            # set beta value to alpha
-            for tie_params in tie_indices:
+            for tie_params in loss_kwargs.get('tie_indices', []):
                 tie_source = result.x[tie_params[0]]
-                for i in tie_params[1:]:
-                    result.x[i] = tie_source
+                for idx in tie_params[1:]:
+                    result.x[idx] = tie_source
             params, loss, success = result.x, result.fun, result.success
 
-        results_dict[tuple(init_params)] = {'params': params, 'loss': loss}
-
-        # update best params so far
         if success and loss < best_loss:
             best_loss = loss
             best_params = params
 
-        # add all best 100 results to priority queue
         if len(pq) < 100:
             heapq.heappush(pq, PQItem(loss, params))
         elif loss < pq[0].loss:
@@ -307,28 +576,9 @@ def minimize_scl_loss(
         if i == max_opt_inits:
             break
 
-    largest = heapq.nlargest(100, pq)
+    if best_params is not None:
+        best_params_dict = {param_names[i]: float(best_params[i]) for i in range(len(param_names))}
+    else:
+        best_params_dict = None
 
-    # if best_params is not None:
-    #     best_params_untransformed = list(untransform_params(best_params))
-    #     A, B, E, alpha, beta = best_params_untransformed
-    #     print(f"Best fit parameters: A={A}, B={B}, E={E}, alpha={alpha}, beta={beta}")
-    #     print(f"Best loss: {best_loss}")
-
-    #     param_list = np.array(param_list)
-    #     cov_matrix = np.cov(np.transpose(param_list))
-    #     param_list_untransformed = untransform_params(param_list)
-    #     cov_matrix_untransformed = np.cov(np.transpose(param_list_untransformed))
-    #     standard_errors = np.sqrt(np.diag(cov_matrix[:5, :5]))
-    #     standard_errors_untransformed = np.sqrt(np.diag(cov_matrix_untransformed[:5, :5]))
-
-    #     parameter_labels = ["A", "B", "E", "alpha", "beta"]
-    #     print("Parameter estimates and their standard errors")
-    #     for index, label in enumerate(parameter_labels):
-    #         print("%s: %.5f (%.5f)" % (label, best_params_untransformed[index], standard_errors_untransformed[index]))
-
-    # else:
-    #     print("Optimization failed to converge.")
-
-    # return {'pq': pq, 'loss': best_loss, 'params':best_params, 'form': form}
-    return best_loss, best_params, pq
+    return best_loss, best_params_dict, pq

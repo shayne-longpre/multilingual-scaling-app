@@ -13,6 +13,26 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 from scaling_laws import ALL_SCALING_LAWS
 
 
+def get_chinchilla_key():
+    """Find a Chinchilla-like scaling law key."""
+    for key in ALL_SCALING_LAWS.keys():
+        if "Chinchilla" in key and "Data" not in key:
+            return key
+    raise KeyError("No Chinchilla scaling law found")
+
+
+def get_chinchilla_replication_key():
+    """Find a Chinchilla Replication scaling law key."""
+    for key in ALL_SCALING_LAWS.keys():
+        if "Replication" in key or "Besiroglu" in key:
+            return key
+    return None
+
+
+CHINCHILLA_KEY = get_chinchilla_key()
+CHINCHILLA_REPLICATION_KEY = get_chinchilla_replication_key()
+
+
 class TestAppIntegration:
     """Test app functionality without Streamlit UI."""
     
@@ -28,12 +48,14 @@ class TestAppIntegration:
     def test_compute_budget_workflow(self):
         """Test complete compute budget optimization workflow."""
         compute_budget = 1e20
-        selected_laws = ["Chinchilla", "Chinchilla Replication"]
+        selected_laws = [CHINCHILLA_KEY]
+        if CHINCHILLA_REPLICATION_KEY:
+            selected_laws.append(CHINCHILLA_REPLICATION_KEY)
         total_tokens = 0  # Unlimited case
         inference_tokens = 0
-        
+
         results = []
-        
+
         for law_name in selected_laws:
             if law_name not in ALL_SCALING_LAWS:
                 continue
@@ -100,9 +122,9 @@ class TestAppIntegration:
     def test_plotting_data_generation(self):
         """Test that plotting data can be generated without errors."""
         compute_range = np.logspace(18, 22, 10)  # Smaller range for testing
-        selected_laws = ["Chinchilla"]
+        selected_laws = [CHINCHILLA_KEY]
         total_tokens = 0
-        
+
         for law_name in selected_laws:
             law_wrapper = ALL_SCALING_LAWS[law_name]
             scaling_law = law_wrapper.scaling_law
@@ -137,9 +159,9 @@ class TestAppIntegration:
     def test_target_loss_mode(self):
         """Test target loss mode functionality."""
         target_loss = 2.0
-        selected_laws = ["Chinchilla"]
+        selected_laws = [CHINCHILLA_KEY]
         total_tokens = 0
-        
+
         for law_name in selected_laws:
             law_wrapper = ALL_SCALING_LAWS[law_name]
             scaling_law = law_wrapper.scaling_law
@@ -176,8 +198,8 @@ class TestAppIntegration:
         """Test inference optimization workflow."""
         compute_budget = 1e20
         inference_tokens = 1e10
-        selected_laws = ["Chinchilla"]  # Only test basic law for inference
-        
+        selected_laws = [CHINCHILLA_KEY]  # Only test basic law for inference
+
         for law_name in selected_laws:
             law_wrapper = ALL_SCALING_LAWS[law_name]
             scaling_law = law_wrapper.scaling_law
@@ -210,7 +232,7 @@ class TestErrorHandling:
     
     def test_invalid_parameters(self):
         """Test handling of invalid parameter values."""
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
         
@@ -246,12 +268,15 @@ class TestErrorHandling:
     
     def test_infeasible_target_loss(self):
         """Test handling of infeasible target loss values."""
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
-        
+
         # Target loss below irreducible should fail
-        irreducible = scaling_law.params.irreducible
+        if isinstance(scaling_law.params, dict):
+            irreducible = scaling_law.params.get('E') or scaling_law.params.get('irreducible')
+        else:
+            irreducible = scaling_law.params.irreducible
         infeasible_loss = irreducible - 0.1
         
         with pytest.raises(ValueError):

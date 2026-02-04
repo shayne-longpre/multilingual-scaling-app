@@ -14,12 +14,23 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
 from scaling_laws import ALL_SCALING_LAWS
 
 
+def get_chinchilla_key():
+    """Find a Chinchilla-like scaling law key."""
+    for key in ALL_SCALING_LAWS.keys():
+        if "Chinchilla" in key:
+            return key
+    raise KeyError("No Chinchilla scaling law found")
+
+
+CHINCHILLA_KEY = get_chinchilla_key()
+
+
 class TestPerformance:
     """Performance benchmarks for scaling law operations."""
     
     def test_loss_computation_speed(self):
         """Loss computation should be fast for vectorized operations."""
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
         
@@ -34,7 +45,7 @@ class TestPerformance:
     
     def test_optimization_speed(self):
         """Optimization should converge reasonably quickly."""
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
         
@@ -51,7 +62,7 @@ class TestPerformance:
     
     def test_plotting_data_generation_speed(self):
         """Generating plotting data should be efficient."""
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
         
@@ -69,7 +80,7 @@ class TestPerformance:
         """Operations should not leak memory significantly."""
         import tracemalloc
         
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
         
@@ -92,7 +103,7 @@ class TestScalability:
     
     def test_extreme_parameter_ranges(self):
         """Should handle extreme but realistic parameter ranges."""
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
         
@@ -114,7 +125,7 @@ class TestScalability:
     
     def test_optimization_convergence_reliability(self):
         """Optimization should converge reliably across parameter ranges."""
-        law_name = "Chinchilla"
+        law_name = CHINCHILLA_KEY
         law_wrapper = ALL_SCALING_LAWS[law_name]
         scaling_law = law_wrapper.scaling_law
         

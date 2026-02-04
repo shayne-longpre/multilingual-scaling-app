@@ -13,4 +13,7 @@ seaborn
 statsmodels
 altair
 streamlit
-torchmin
+pytorch-minimize
+fastapi
+uvicorn[standard]
+python-multipart

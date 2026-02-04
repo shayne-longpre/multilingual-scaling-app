@@ -8,26 +8,42 @@ from scipy.optimize import brentq
 sys.path.append("./")
 sys.path.append("src/")
 
-from src.scaling_law_classes.scaling_law import ScalingLaw, BasicScalingLaw
+from src.scaling_law_classes.scaling_law import ScalingLaw
+from src.scaling_law_classes.basic_scaling_law import BasicScalingLaw
 
 
 class DataConstrainedScalingLaw(ScalingLaw):
     default_vars = {"N": 1.0, "D": 1.0, "U": 1.0}
 
-    def form_exp_parts(self, params_list: List[float], **inp: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
-        a, b, e, alpha, beta, ep_star, n_star = params_list
-        # UN, U, RD, RN = inp[:, 0], inp[:, 1], inp[:, 2], inp[:, 3]
+    # Param name mappings for optimizer
+    optim_params_names = ['logA', 'logB', 'logE', 'alpha', 'beta', 'rd_star', 'rn_star']
+
+    def form_exp_parts(self, params_list: torch.Tensor, inp: Dict[str, torch.Tensor]) -> List[torch.Tensor]:
+        """
+        Evaluate the log-sum-exp parts using the optimizer's current parameter values.
+
+        Args:
+            params_list: tensor of parameter values from optimizer [logA, logB, logE, alpha, beta, rd_star, rn_star]
+            inp: dict with 'UN', 'U', 'RD', 'RN', 'Loss' tensors
+        """
+        logA, logB, logE, alpha, beta, rd_star, rn_star = (
+            params_list[0], params_list[1], params_list[2],
+            params_list[3], params_list[4], params_list[5], params_list[6]
+        )
         UN = inp["UN"]
         U = inp["U"]
         RD = inp["RD"]
         RN = inp["RN"]
-        tm = UN + UN * n_star * (1 - torch.exp(-RN / n_star))
-        td = U + U * ep_star * (1 - torch.exp(-RD / ep_star))
+        tm = UN + UN * rn_star * (1 - torch.exp(-RN / rn_star))
+        td = U + U * rd_star * (1 - torch.exp(-RD / rd_star))
         return [
-            a - alpha * torch.log(tm),
-            b - beta * torch.log(td),
-            e.expand(inp["Loss"].shape[0]),
+            logA - alpha * torch.log(tm),
+            logB - beta * torch.log(td),
+            logE.expand(inp["Loss"].shape[0]),
         ]
+
+    # Alias for consistency with other scaling law classes
+    apply_form_exp_parts = form_exp_parts
 
     # --- NumPy loss ------------------------------------------------------
     def loss_expr(self, *, N: float, D: float, U: float, **kwargs):
@@ -39,17 +55,17 @@ class DataConstrainedScalingLaw(ScalingLaw):
         RD = np.maximum((D / U) - 1, 0)
         UN = np.minimum(N, self.D_to_N(U))
         RN = np.maximum((N / UN) - 1, 0)
-        model_denom = UN + UN * p.extras["rn_star"] * (
-            1 - np.exp(-1 * RN / p.extras["rn_star"])
+        model_denom = UN + UN * p['rn_star'] * (
+            1 - np.exp(-1 * RN / p['rn_star'])
         )
-        data_denom = U + U * p.extras["rd_star"] * (
-            1 - np.exp(-1 * RD / (p.extras["rd_star"]))
+        data_denom = U + U * p['rd_star'] * (
+            1 - np.exp(-1 * RD / p['rd_star'])
         )
 
         loss = (
-            p.irreducible
-            + (p.A / (model_denom**p.alpha))
-            + (p.B / (data_denom**p.beta))
+            p['E']
+            + (p['A'] / (model_denom**p['alpha']))
+            + (p['B'] / (data_denom**p['beta']))
         )
         return loss
 
@@ -83,12 +99,11 @@ class DataConstrainedScalingLaw(ScalingLaw):
         except ValueError as e:
             raise ValueError("Unable to bracket iso‑loss root for given N.") from e
 
-    # @staticmethod
     def torch_loss(
         self,
-        form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]], 
-        params_list: Iterable[float], 
-        inp: Dict[str, torch.Tensor], 
+        params_list: torch.Tensor,
+        form_exp_parts: Callable[[List[float], Dict[str, torch.Tensor]], List[torch.Tensor]],
+        inp: Dict[str, torch.Tensor],
         tie_indices: List[List[int]] = [],
         loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3}
     ) -> torch.Tensor:
@@ -98,22 +113,29 @@ class DataConstrainedScalingLaw(ScalingLaw):
             tie_source = params_list[tie_params[0]]
             for i in tie_params[1:]:
                 params_list[i] = tie_source
-        pre = torch.stack(form_exp_parts(params_list, **inp))
+        pre = torch.stack(form_exp_parts(params_list, inp))
         post = torch.logsumexp(pre, dim=0)
 
         if loss_func == 'log_huber':
             return torch.nn.functional.huber_loss(
                 post, torch.log(inp["Loss"]), delta=delta, reduction="none"
             ).sum()
+        elif loss_func == 'huber':
+            return torch.nn.functional.huber_loss(
+                torch.exp(post), inp["Loss"], delta=delta, reduction="none"
+            ).sum()
+        elif loss_func == 'log_mae':
+            return torch.abs(torch.log(inp["Loss"]) - post).sum()
+        elif loss_func == 'log_mse':
+            return ((torch.log(inp["Loss"]) - post) ** 2).sum()
         else:
             raise NotImplementedError(f"Loss function {loss_func} not implemented.")
 
-    # @staticmethod
     def numpy_loss(
         self,
+        params_list: np.ndarray,
         form_exp_parts: Callable[[List[float], Dict[str, np.ndarray]], List[np.ndarray]],
-        params_list: List[float], 
-        inp: Dict[str, np.ndarray], 
+        inp: Dict[str, np.ndarray],
         tie_indices: List[List[int]] = [],
         loss_kwargs: Dict = {'loss_func': 'log_huber', 'delta': 1e-3},
     ) -> np.ndarray:
@@ -128,12 +150,21 @@ class DataConstrainedScalingLaw(ScalingLaw):
         post = np.logaddexp.reduce(pre, axis=0)
 
         if loss_func == 'log_huber':
-            # Apply Huber loss formula
             return np.sum(
                 np.where(
                     np.abs(np.log(inp["Loss"]) - post) <= delta,
-                    0.5 * (np.log(inp["Loss"]) - post)**2, 
+                    0.5 * (np.log(inp["Loss"]) - post)**2,
                     delta * (np.abs(np.log(inp["Loss"]) - post) - 0.5 * delta)))
+        elif loss_func == 'huber':
+            return np.sum(
+                np.where(
+                    np.abs(inp["Loss"] - np.exp(post)) <= delta,
+                    0.5 * (inp["Loss"] - np.exp(post))**2,
+                    delta * (np.abs(inp["Loss"] - np.exp(post)) - 0.5 * delta)))
+        elif loss_func == 'log_mae':
+            return np.abs(np.log(inp["Loss"]) - post).sum()
+        elif loss_func == 'log_mse':
+            return ((np.log(inp["Loss"]) - post) ** 2).sum()
         else:
             raise NotImplementedError(f"Loss function {loss_func} not implemented.")
 
@@ -145,52 +176,87 @@ class DataConstrainedScalingLaw(ScalingLaw):
     def compute_optimal_allocation(self, C, *, U, **kw):
         return super().compute_optimal_allocation(C, U=U, **kw)
 
-    # @classmethod
-    def fit(self, data, *args, **kw):
+    def fit(self, data, *args, **kwargs):
+        from src.scaling_law_classes.general_scaling_law import minimize_scl_loss
+
         unique_tokens = data["U"].max()
         pre_epoch_sample = data[data["D"] <= unique_tokens]
 
-        min_epochs = round(pre_epoch_sample["D"].min() / unique_tokens,2)
-        max_epochs = round(pre_epoch_sample["D"].max() / unique_tokens,2)
+        min_epochs = round(pre_epoch_sample["D"].min() / unique_tokens, 2)
+        max_epochs = round(pre_epoch_sample["D"].max() / unique_tokens, 2)
         print(f"Number of data samples <1 epoch: {len(pre_epoch_sample)} / {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
 
-        orig_loss, basic, _ = BasicScalingLaw.fit(pre_epoch_sample, metric=metric, tie=tie)
-        p0 = basic.params
-        a0, b0, e0 = map(math.log, [p0.A, p0.B, p0.irreducible])
-        print(orig_loss, p0)
+        # Fit BasicScalingLaw to pre-epoch data to get initial parameters
+        basic_law = BasicScalingLaw(params={
+            'A': 1.0, 'B': 1.0, 'E': 1.0, 'alpha': 0.5, 'beta': 0.5
+        })
+        orig_loss, p0 = basic_law.fit(pre_epoch_sample, **kwargs)
+        a0, b0, e0 = map(math.log, [p0['A'], p0['B'], p0['E']])
+        print(f"BasicScalingLaw fit loss: {orig_loss}, params: {p0}")
 
-        alpha, beta = p0.alpha, p0.beta
+        alpha, beta = p0['alpha'], p0['beta']
+
+        # Compute G ratio for N_sat calculation (G = (A/B)^(1/(alpha+beta)) * (beta/alpha)^(beta/(alpha+beta)))
+        G = (p0['A'] / p0['B']) ** (1 / (alpha + beta)) * (beta / alpha) ** (beta / (alpha + beta))
+
         def row_vec(r):
-            # correct N_sat – identical to BasicScalingLaw.D_to_N(U)
-            N_sat = (unique_tokens * basic.G) ** (beta / alpha) * basic.G
+            # N_sat – maximum model size that can be trained effectively with U tokens
+            N_sat = (unique_tokens * G) ** (beta / alpha) * G
 
             UN = min(r["N"], N_sat)                    # model denominator base
             RD = max(r["D"] / unique_tokens - 1, 0)    # data reuse
-            RN = max(r["N"] / UN - 1, 0)               # model reuse
+            RN = max(r["N"] / UN - 1, 0) if UN > 0 else 0  # model reuse
 
             return [UN, unique_tokens, RD, RN]
 
         X = np.stack([row_vec(r) for _, r in data.iterrows()]).astype(float)
-        y = data[metric].values.astype(float)
+        y = data["Loss"].values.astype(float)
 
         post_epoch_sample = data[data["D"] >= unique_tokens]
-        min_epochs = round(post_epoch_sample["D"].min() / unique_tokens,2)
-        max_epochs = round(post_epoch_sample["D"].max() / unique_tokens,2)
-        print(f"Number of data samples >1 epoch: {len(post_epoch_sample)} / {len(data)}. Ranging from {min_epochs} to {max_epochs} epochs.")
+        if len(post_epoch_sample) > 0:
+            min_epochs_post = round(post_epoch_sample["D"].min() / unique_tokens, 2)
+            max_epochs_post = round(post_epoch_sample["D"].max() / unique_tokens, 2)
+            print(f"Number of data samples >1 epoch: {len(post_epoch_sample)} / {len(data)}. Ranging from {min_epochs_post} to {max_epochs_post} epochs.")
 
-        grid_vals = [(0, 20, 10), (0, 20, 10)]
-        torch_inputs = torch.tensor(np.c_[X, y], dtype=torch.float32)
-        # print(torch_inputs)
-        torch_inputs.require_grad = True
-        init = [a0, b0, e0, alpha, beta, 1, 1]      # 7-vector
+        # Create input dict with tensors
+        inp_torch = {
+            "UN": torch.tensor(X[:, 0], dtype=torch.float32),
+            "U": torch.tensor(X[:, 1], dtype=torch.float32),
+            "RD": torch.tensor(X[:, 2], dtype=torch.float32),
+            "RN": torch.tensor(X[:, 3], dtype=torch.float32),
+            "Loss": torch.tensor(y, dtype=torch.float32),
+        }
+
+        # Grid search over rd_star and rn_star, keeping other params fixed from BasicScalingLaw fit
+        grid = {
+            'logA': torch.tensor([a0]),
+            'logB': torch.tensor([b0]),
+            'logE': torch.tensor([e0]),
+            'alpha': torch.tensor([alpha]),
+            'beta': torch.tensor([beta]),
+            'rd_star': torch.arange(start=0.1, end=20.1, step=2.0),
+            'rn_star': torch.arange(start=0.1, end=20.1, step=2.0),
+        }
+
         loss, theta, _pq = minimize_scl_loss(
-            init_params   = init,
-            grid_specs    = grid_vals,              # grid over the LAST 2 parameters
-            params_to_fix = [0, 1, 2, 3, 4],        # first five are frozen
-            torch_loss    = self.torch_loss,
-            inp_torch     = torch_inputs,
+            init_params     = None,  # ignored because grid_specs is provided
+            grid_specs      = grid,
+            torch_loss      = self.torch_loss,
+            form_exp_parts  = self.apply_form_exp_parts,
+            inp_torch       = inp_torch,
+            loss_kwargs     = {"tie_groups": kwargs.get('tie', []), "delta": 1e-3, "loss_func": "log_huber"},
+            param_names     = self.optim_params_names,
         )
 
-        # A,B,E,alpha,beta,rd,rn = theta
-        params = {"A": np.exp(theta['a']), "B": np.exp(theta['b']), "E": np.exp(theta['e']), "alpha": theta['alpha'], "beta": theta['beta'], "rd_star": theta['rd'], "rn_star": theta['rn']}
-        return loss, params
+        # theta is a dict with optim_params_names keys
+        # Convert to fit_params with original param names
+        fit_params = {
+            "A": np.exp(theta['logA']),
+            "B": np.exp(theta['logB']),
+            "E": np.exp(theta['logE']),
+            "alpha": theta['alpha'],
+            "beta": theta['beta'],
+            "rd_star": theta['rd_star'],
+            "rn_star": theta['rn_star'],
+        }
+        return loss, fit_params
